@@ -5,17 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Travel Tracker - Live Driver Tracking</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <!-- Firebase SDK (Compat Version) -->
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
-    
-    <!-- Leaflet Marker Cluster -->
-    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
     
     <!-- PWA Meta Tags for Mobile -->
     <meta name="mobile-web-app-capable" content="yes">
@@ -567,56 +562,6 @@
             margin: 20px auto;
         }
 
-        /* Animations */
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        @keyframes pulse {
-            0% {
-                box-shadow: 0 0 0 0 rgba(26, 115, 232, 0.7);
-            }
-            70% {
-                box-shadow: 0 0 0 10px rgba(26, 115, 232, 0);
-            }
-            100% {
-                box-shadow: 0 0 0 0 rgba(26, 115, 232, 0);
-            }
-        }
-
-        @keyframes slideIn {
-            from {
-                transform: translateX(100%);
-                opacity: 0;
-            }
-            to {
-                transform: translateX(0);
-                opacity: 1;
-            }
-        }
-
-        @keyframes slideOut {
-            from {
-                transform: translateX(0);
-                opacity: 1;
-            }
-            to {
-                transform: translateX(100%);
-                opacity: 0;
-            }
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(-10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        @keyframes slideDown {
-            from { top: -100px; opacity: 0; }
-            to { top: 20px; opacity: 1; }
-        }
-
         /* Real-time Badge */
         .realtime-badge {
             display: inline-flex;
@@ -669,16 +614,6 @@
             background: linear-gradient(45deg, #f4b400, #f09300);
         }
 
-        /* Trip Information */
-        .trip-info {
-            background: linear-gradient(45deg, #1a73e8, #0d47a1);
-            color: white;
-            padding: 1rem;
-            border-radius: 8px;
-            margin-bottom: 1rem;
-            animation: fadeIn 0.5s ease;
-        }
-
         /* Settings Modal */
         .settings-modal {
             position: fixed;
@@ -704,6 +639,29 @@
             max-height: 90vh;
             overflow-y: auto;
             position: relative;
+        }
+
+        /* Animations */
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(26, 115, 232, 0.7);
+            }
+            70% {
+                box-shadow: 0 0 0 10px rgba(26, 115, 232, 0);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(26, 115, 232, 0);
+            }
+        }
+
+        @keyframes slideDown {
+            from { top: -100px; opacity: 0; }
+            to { top: 20px; opacity: 1; }
         }
 
         /* Responsive */
@@ -1043,7 +1001,8 @@
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-     <script>
+    
+    <script>
     // ==================== FIREBASE CONFIGURATION ====================
     const firebaseConfig = {
         apiKey: "AIzaSyACs_dGBcZG_ZxvB7kD0_Vj21GKy7LHV4c",
@@ -1064,7 +1023,6 @@
     let driverMarkers = {};
     let driversUnsubscribe = null;
     let locationWatchId = null;
-    let driverLocationUpdates = null;
     let mapInitialized = false;
     let lastPosition = null;
     let lastPositionTime = null;
@@ -1088,6 +1046,9 @@
         // Setup UI
         setupLoginPage();
         setupDashboardButtons();
+        
+        // Check if user is already logged in
+        checkExistingAuth();
     });
 
     // ==================== LOGIN PAGE FUNCTIONS ====================
@@ -1144,6 +1105,29 @@
     }
 
     // ==================== FIREBASE AUTH FUNCTIONS ====================
+    async function checkExistingAuth() {
+        if (!auth) return;
+        
+        auth.onAuthStateChanged(async (user) => {
+            if (user) {
+                try {
+                    const ownerDoc = await db.collection('owners').doc(user.uid).get();
+                    if (ownerDoc.exists) {
+                        currentUser = {
+                            uid: user.uid,
+                            email: user.email,
+                            name: ownerDoc.data().name,
+                            type: 'owner'
+                        };
+                        showOwnerDashboard();
+                    }
+                } catch (error) {
+                    console.error('Error checking auth state:', error);
+                }
+            }
+        });
+    }
+
     async function registerOwner() {
         if (!auth || !db) {
             showLoginError('Firebase not initialized. Please refresh the page.');
@@ -2104,6 +2088,62 @@
         });
     }
 
+    function focusDriverOnMap(driverId) {
+        if (driverMarkers[driverId] && map) {
+            const marker = driverMarkers[driverId];
+            map.setView(marker.getLatLng(), 15);
+            marker.openPopup();
+        }
+    }
+
+    // ==================== DASHBOARD DISPLAY FUNCTIONS ====================
+    function showOwnerDashboard() {
+        document.getElementById('loginContainer').style.display = 'none';
+        document.getElementById('driverDashboard').style.display = 'none';
+        document.getElementById('ownerDashboard').style.display = 'block';
+        
+        // Update welcome message
+        const welcomeMessage = document.getElementById('welcomeMessage');
+        if (welcomeMessage && currentUser) {
+            welcomeMessage.textContent = `Welcome, ${currentUser.name}`;
+        }
+        
+        // Initialize map
+        if (!mapInitialized) {
+            initMap();
+        }
+        
+        // Start listening to drivers
+        listenToDrivers();
+        
+        // Center map on user's location if available
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(function(position) {
+                if (map) {
+                    map.setView([position.coords.latitude, position.coords.longitude], 13);
+                }
+            });
+        }
+    }
+
+    function showDriverDashboard() {
+        document.getElementById('loginContainer').style.display = 'none';
+        document.getElementById('ownerDashboard').style.display = 'none';
+        document.getElementById('driverDashboard').style.display = 'block';
+        
+        if (currentDriver) {
+            // Update driver information
+            document.getElementById('driverNameDisplay').textContent = currentDriver.name;
+            document.getElementById('driverVehicleDisplay').textContent = currentDriver.vehicle;
+            document.getElementById('driverPhoneDisplay').textContent = currentDriver.phone;
+            document.getElementById('driverStatusDisplay').textContent = currentDriver.isOnline ? 'Online' : 'Offline';
+            document.getElementById('driverStatusDisplay').style.color = currentDriver.isOnline ? '#0f9d58' : '#db4437';
+            
+            // Update sharing status
+            updateDriverSharingStatus();
+        }
+    }
+
     // ==================== HELPER FUNCTIONS ====================
     function formatTime(date) {
         if (!date) return '--:--:--';
@@ -2136,140 +2176,203 @@
             }
         }, 5000);
     }
-        // ==================== DASHBOARD BUTTONS ====================
-        function setupDashboardButtons() {
-            const logoutBtn = document.getElementById('logoutBtn');
-            const driverLogoutBtn = document.getElementById('driverLogoutBtn');
-            const addDriverBtn = document.getElementById('addDriverBtn');
-            const closeModalBtn = document.getElementById('closeModalBtn');
-            const submitDriverBtn = document.getElementById('submitDriverBtn');
-            const refreshBtn = document.getElementById('refreshBtn');
-            const centerBtn = document.getElementById('centerBtn');
-            const viewAllBtn = document.getElementById('viewAllBtn');
-            const shareLocationBtn = document.getElementById('shareLocationBtn');
+
+    function showLoginError(message) {
+        const errorDiv = document.getElementById('loginError');
+        if (errorDiv) {
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+    }
+
+    function showDriverError(message) {
+        const errorDiv = document.getElementById('addDriverError');
+        if (errorDiv) {
+            errorDiv.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${message}`;
+            errorDiv.style.display = 'block';
             
-            if (logoutBtn) logoutBtn.addEventListener('click', logout);
-            if (driverLogoutBtn) driverLogoutBtn.addEventListener('click', driverLogout);
-            if (addDriverBtn) addDriverBtn.addEventListener('click', openAddDriverModal);
-            if (closeModalBtn) closeModalBtn.addEventListener('click', closeAddDriverModal);
-            if (submitDriverBtn) submitDriverBtn.addEventListener('click', addNewDriver);
-            if (refreshBtn) refreshBtn.addEventListener('click', refreshLocations);
-            if (centerBtn) centerBtn.addEventListener('click', centerMap);
-            if (viewAllBtn) viewAllBtn.addEventListener('click', viewAllDrivers);
-            if (shareLocationBtn) shareLocationBtn.addEventListener('click', toggleLocationSharing);
+            // Hide success message if shown
+            const successDiv = document.getElementById('addDriverSuccess');
+            if (successDiv) successDiv.style.display = 'none';
+        }
+    }
+
+    function showDriverSuccess(message) {
+        const successDiv = document.getElementById('addDriverSuccess');
+        if (successDiv) {
+            successDiv.innerHTML = `<i class="fas fa-check-circle"></i> ${message}`;
+            successDiv.style.display = 'block';
             
-            // Close settings modal when clicking outside
-            const settingsModal = document.getElementById('settingsModal');
-            if (settingsModal) {
-                settingsModal.addEventListener('click', function(event) {
-                    if (event.target === this) {
-                        this.style.display = 'none';
-                    }
+            // Hide error message if shown
+            const errorDiv = document.getElementById('addDriverError');
+            if (errorDiv) errorDiv.style.display = 'none';
+        }
+    }
+
+    function getFirebaseErrorMessage(error) {
+        switch(error.code) {
+            case 'auth/email-already-in-use':
+                return 'Email already in use. Please use a different email.';
+            case 'auth/invalid-email':
+                return 'Invalid email address.';
+            case 'auth/operation-not-allowed':
+                return 'Operation not allowed.';
+            case 'auth/weak-password':
+                return 'Password is too weak. Please use a stronger password.';
+            case 'auth/user-disabled':
+                return 'This account has been disabled.';
+            case 'auth/user-not-found':
+                return 'User not found. Please check your email.';
+            case 'auth/wrong-password':
+                return 'Incorrect password. Please try again.';
+            case 'permission-denied':
+                return 'Permission denied. You may not have access to this resource.';
+            default:
+                return error.message || 'An error occurred. Please try again.';
+        }
+    }
+
+    // ==================== DASHBOARD BUTTONS ====================
+    function setupDashboardButtons() {
+        const logoutBtn = document.getElementById('logoutBtn');
+        const driverLogoutBtn = document.getElementById('driverLogoutBtn');
+        const addDriverBtn = document.getElementById('addDriverBtn');
+        const closeModalBtn = document.getElementById('closeModalBtn');
+        const submitDriverBtn = document.getElementById('submitDriverBtn');
+        const refreshBtn = document.getElementById('refreshBtn');
+        const centerBtn = document.getElementById('centerBtn');
+        const viewAllBtn = document.getElementById('viewAllBtn');
+        const shareLocationBtn = document.getElementById('shareLocationBtn');
+        
+        if (logoutBtn) logoutBtn.addEventListener('click', logout);
+        if (driverLogoutBtn) driverLogoutBtn.addEventListener('click', driverLogout);
+        if (addDriverBtn) addDriverBtn.addEventListener('click', openAddDriverModal);
+        if (closeModalBtn) closeModalBtn.addEventListener('click', closeAddDriverModal);
+        if (submitDriverBtn) submitDriverBtn.addEventListener('click', addNewDriver);
+        if (refreshBtn) refreshBtn.addEventListener('click', refreshLocations);
+        if (centerBtn) centerBtn.addEventListener('click', centerMap);
+        if (viewAllBtn) viewAllBtn.addEventListener('click', viewAllDrivers);
+        if (shareLocationBtn) shareLocationBtn.addEventListener('click', toggleLocationSharing);
+        
+        // Close settings modal when clicking outside
+        const settingsModal = document.getElementById('settingsModal');
+        if (settingsModal) {
+            settingsModal.addEventListener('click', function(event) {
+                if (event.target === this) {
+                    this.style.display = 'none';
+                }
+            });
+        }
+    }
+
+    function openAddDriverModal() {
+        const modal = document.getElementById('addDriverModal');
+        if (modal) modal.style.display = 'flex';
+    }
+
+    function closeAddDriverModal() {
+        const modal = document.getElementById('addDriverModal');
+        if (modal) modal.style.display = 'none';
+        
+        // Clear messages
+        const errorDiv = document.getElementById('addDriverError');
+        const successDiv = document.getElementById('addDriverSuccess');
+        if (errorDiv) errorDiv.style.display = 'none';
+        if (successDiv) successDiv.style.display = 'none';
+    }
+
+    function refreshLocations() {
+        const lastUpdated = document.getElementById('lastUpdated');
+        if (lastUpdated) {
+            lastUpdated.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+        }
+    }
+
+    function centerMap() {
+        if (map && navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(function(position) {
+                map.setView([position.coords.latitude, position.coords.longitude], 13);
+            }, function() {
+                showAlert('Could not get your location', 'error');
+            });
+        }
+    }
+
+    function viewAllDrivers() {
+        const markers = Object.values(driverMarkers);
+        if (markers.length === 0) {
+            showAlert('No drivers are currently sharing location.', 'info');
+            return;
+        }
+        
+        if (markers.length === 1 && map) {
+            map.setView(markers[0].getLatLng(), 13);
+        } else if (map) {
+            const bounds = L.latLngBounds(markers.map(marker => marker.getLatLng()));
+            map.fitBounds(bounds, { padding: [50, 50] });
+        }
+    }
+
+    async function logout() {
+        try {
+            if (currentDriver && db) {
+                await db.collection('drivers').doc(currentDriver.id).update({
+                    isOnline: false,
+                    isSharingLocation: false,
+                    location: null
                 });
             }
-        }
-
-        function openAddDriverModal() {
-            const modal = document.getElementById('addDriverModal');
-            if (modal) modal.style.display = 'flex';
-        }
-
-        function closeAddDriverModal() {
-            const modal = document.getElementById('addDriverModal');
-            if (modal) modal.style.display = 'none';
-        }
-
-        function refreshLocations() {
-            const lastUpdated = document.getElementById('lastUpdated');
-            if (lastUpdated) {
-                lastUpdated.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
-            }
-        }
-
-        function centerMap() {
-            if (map && navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(function(position) {
-                    map.setView([position.coords.latitude, position.coords.longitude], 13);
-                }, function() {
-                    showAlert('Could not get your location', 'error');
-                });
-            }
-        }
-
-        function viewAllDrivers() {
-            const markers = Object.values(driverMarkers);
-            if (markers.length === 0) {
-                showAlert('No drivers are currently sharing location.', 'info');
-                return;
+            
+            if (locationWatchId) {
+                navigator.geolocation.clearWatch(locationWatchId);
+                locationWatchId = null;
             }
             
-            if (markers.length === 1 && map) {
-                map.setView(markers[0].getLatLng(), 13);
-            } else if (map) {
-                const bounds = L.latLngBounds(markers.map(marker => marker.getLatLng()));
-                map.fitBounds(bounds, { padding: [50, 50] });
+            if (driversUnsubscribe) {
+                driversUnsubscribe();
+                driversUnsubscribe = null;
             }
-        }
-
-        async function logout() {
-            try {
-                if (currentDriver && db) {
-                    await db.collection('drivers').doc(currentDriver.id).update({
-                        isOnline: false,
-                        isSharingLocation: false,
-                        location: null
-                    });
-                }
-                
-                if (locationWatchId) {
-                    navigator.geolocation.clearWatch(locationWatchId);
-                    locationWatchId = null;
-                }
-                
-                if (driverLocationUpdates) {
-                    driverLocationUpdates();
-                    driverLocationUpdates = null;
-                }
-                
-                if (auth && currentUser && currentUser.type === 'owner') {
-                    await auth.signOut();
-                }
-                
-                if (driversUnsubscribe) {
-                    driversUnsubscribe();
-                    driversUnsubscribe = null;
-                }
-                
-                mapInitialized = false;
-                
-                currentUser = null;
-                currentDriver = null;
-                
-                // Hide all dashboards
-                document.getElementById('ownerDashboard').style.display = 'none';
-                document.getElementById('driverDashboard').style.display = 'none';
-                document.getElementById('loginContainer').style.display = 'flex';
-                
-                // Close modals
-                document.getElementById('settingsModal').style.display = 'none';
-                document.getElementById('addDriverModal').style.display = 'none';
-                
-            } catch (error) {
-                console.error('Error logging out:', error);
+            
+            if (auth && currentUser && currentUser.type === 'owner') {
+                await auth.signOut();
             }
+            
+            mapInitialized = false;
+            
+            currentUser = null;
+            currentDriver = null;
+            
+            // Hide all dashboards
+            document.getElementById('ownerDashboard').style.display = 'none';
+            document.getElementById('driverDashboard').style.display = 'none';
+            document.getElementById('loginContainer').style.display = 'flex';
+            
+            // Close modals
+            document.getElementById('settingsModal').style.display = 'none';
+            document.getElementById('addDriverModal').style.display = 'none';
+            
+            // Clear login forms
+            document.getElementById('ownerEmail').value = '';
+            document.getElementById('ownerPassword').value = '';
+            document.getElementById('driverName').value = '';
+            document.getElementById('driverPin').value = '';
+            
+        } catch (error) {
+            console.error('Error logging out:', error);
         }
+    }
 
-        async function driverLogout() {
-            await logout();
+    async function driverLogout() {
+        await logout();
+    }
+
+    // Close modal when clicking outside
+    window.onclick = function(event) {
+        const modal = document.getElementById('addDriverModal');
+        if (event.target == modal) {
+            closeAddDriverModal();
         }
-
-        // Close modal when clicking outside
-        window.onclick = function(event) {
-            const modal = document.getElementById('addDriverModal');
-            if (event.target == modal) {
-                closeAddDriverModal();
-            }
-        };
+    };
     </script>
 </body>
 </html>
