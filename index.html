@@ -20,8 +20,17 @@
     <!-- PWA Meta Tags for Mobile -->
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="theme-color" content="#1a73e8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    
+    <!-- For iOS Safari -->
+    <meta name="apple-mobile-web-app-title" content="Travel Tracker">
+    <link rel="apple-touch-icon" href="https://img.icons8.com/color/96/000000/car--v1.png">
+    
+    <!-- For Android Chrome -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="application-name" content="Travel Tracker">
     
     <style>
         * {
@@ -612,6 +621,11 @@
             to { opacity: 1; transform: translateY(0); }
         }
 
+        @keyframes slideDown {
+            from { top: -100px; opacity: 0; }
+            to { top: 20px; opacity: 1; }
+        }
+
         /* Real-time Badge */
         .realtime-badge {
             display: inline-flex;
@@ -631,18 +645,21 @@
         .alert {
             position: fixed;
             top: 20px;
-            right: 20px;
-            padding: 15px 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 15px 25px;
             border-radius: 8px;
             color: white;
             font-weight: 600;
             z-index: 10000;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-            animation: slideIn 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            animation: slideDown 0.3s ease;
+            text-align: center;
+            min-width: 300px;
+            max-width: 90%;
             display: flex;
             align-items: center;
             gap: 10px;
-            max-width: 350px;
         }
 
         .alert-success {
@@ -655,6 +672,10 @@
 
         .alert-info {
             background: linear-gradient(45deg, #1a73e8, #0d47a1);
+        }
+
+        .alert-warning {
+            background: linear-gradient(45deg, #f4b400, #f09300);
         }
 
         /* Trip Information */
@@ -674,7 +695,34 @@
             gap: 8px;
         }
 
-        /* Responsive */
+        /* Settings Modal */
+        .settings-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 10000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            display: none;
+        }
+
+        .settings-content {
+            background: white;
+            padding: 2rem;
+            border-radius: 15px;
+            max-width: 500px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+            position: relative;
+        }
+
+        /* Mobile Optimization */
         @media (max-width: 1024px) {
             .main-content {
                 flex-direction: column;
@@ -714,11 +762,11 @@
             .alert {
                 left: 20px;
                 right: 20px;
+                transform: none;
                 max-width: none;
             }
         }
 
-        /* Mobile Optimization */
         @media (max-width: 480px) {
             .driver-box {
                 padding: 1.5rem;
@@ -733,6 +781,23 @@
                 padding: 0.8rem;
                 font-size: 1rem;
             }
+            
+            /* Larger touch targets for mobile */
+            .btn-share-location {
+                padding: 15px !important;
+                font-size: 1.2rem !important;
+                margin: 20px 0;
+            }
+            
+            /* Prevent zoom on input focus */
+            input, select, textarea {
+                font-size: 16px !important;
+            }
+        }
+
+        /* Mobile-specific scrolling */
+        .driver-list {
+            -webkit-overflow-scrolling: touch;
         }
     </style>
 </head>
@@ -768,6 +833,16 @@
             
             <!-- Driver Login Form -->
             <div id="driverLoginForm" class="form-section hidden">
+                <!-- Mobile Setup Instructions -->
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 10px; margin: 15px 0; border-left: 4px solid #667eea;">
+                    <p style="margin: 0; font-size: 0.9rem; color: #5f6368;">
+                        <i class="fas fa-mobile-alt"></i> <strong>Mobile Setup:</strong><br>
+                        1. Enable Location/GPS<br>
+                        2. Allow browser location access<br>
+                        3. Keep app open while sharing<br>
+                    </p>
+                </div>
+                
                 <div class="input-group">
                     <label for="driverName">Driver Name</label>
                     <input type="text" id="driverName" placeholder="Enter your full name">
@@ -897,6 +972,29 @@
                 <p>Share your live location with the owner</p>
             </div>
             
+            <!-- Location Setup Instructions -->
+            <div class="location-instructions" style="
+                background: #f0f7ff;
+                border-radius: 10px;
+                padding: 15px;
+                margin: 20px 0;
+                border-left: 4px solid #1a73e8;
+                display: none;
+            " id="locationInstructions">
+                <h4 style="color: #1a73e8; margin-bottom: 10px;">
+                    <i class="fas fa-info-circle"></i> Location Setup Guide
+                </h4>
+                <div style="font-size: 0.9rem;">
+                    <p><strong>For accurate tracking:</strong></p>
+                    <ul style="margin-left: 20px;">
+                        <li>Turn ON GPS/Location services</li>
+                        <li>Select "High accuracy" mode</li>
+                        <li>Allow location access when prompted</li>
+                        <li>Keep app open while sharing</li>
+                    </ul>
+                </div>
+            </div>
+            
             <div class="location-status" id="locationStatus">
                 <i class="fas fa-map-marker-alt location-not-sharing" id="locationIcon"></i>
                 <h3 id="statusText">Location Sharing is OFF</h3>
@@ -988,6 +1086,13 @@
         </div>
     </div>
 
+    <!-- Settings Modal for Location Guide -->
+    <div class="settings-modal" id="settingsModal">
+        <div class="settings-content" id="settingsContent">
+            <!-- Content will be inserted by JavaScript -->
+        </div>
+    </div>
+
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         // ==================== FIREBASE CONFIGURATION ====================
@@ -1013,63 +1118,96 @@
         let driverLocationUpdates = null;
         let mapInitialized = false;
         let markerCluster = null;
-        let userLocationMarker = null;
 
         // ==================== INITIALIZATION ====================
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('DOM loaded - setting up Travel Tracker');
+            console.log('Travel Tracker Initializing...');
             
-            // Initialize Firebase services
-            initializeFirebaseServices();
+            // Detect mobile device and apply fixes
+            if (isMobileDevice()) {
+                console.log('Mobile device detected - applying mobile optimizations');
+                applyMobileOptimizations();
+            }
             
-            // Setup login page buttons
-            setupLoginPage();
-            
-            // Setup dashboard buttons
-            setupDashboardButtons();
-            
-            // Add alert styles
-            addAlertStyles();
-        });
-
-        function initializeFirebaseServices() {
+            // Initialize Firebase
             try {
-                // Initialize Firebase
                 firebase.initializeApp(firebaseConfig);
-                
-                // Get Firebase services
                 db = firebase.firestore();
                 auth = firebase.auth();
-                
                 console.log('Firebase initialized successfully');
                 
-                // Check if user is already logged in
-                auth.onAuthStateChanged(async (user) => {
-                    if (user) {
-                        console.log('User already logged in:', user.email);
-                        try {
-                            const ownerDoc = await db.collection('owners').doc(user.uid).get();
-                            if (ownerDoc.exists) {
-                                currentUser = {
-                                    uid: user.uid,
-                                    email: user.email,
-                                    name: ownerDoc.data().name,
-                                    type: 'owner'
-                                };
-                                showOwnerDashboard();
-                            }
-                        } catch (error) {
-                            console.error('Error checking user:', error);
-                        }
-                    } else {
-                        console.log('No user logged in');
-                    }
-                });
+                // Test permissions on load
+                setTimeout(testFirebasePermissions, 1000);
                 
             } catch (error) {
-                console.error('Error initializing Firebase:', error);
-                showAlert('Firebase initialization failed. Please check console for details.', 'error');
+                console.error('Firebase initialization error:', error);
+                showAlert('Firebase initialization failed: ' + error.message, 'error');
             }
+            
+            // Setup UI
+            setupLoginPage();
+            setupDashboardButtons();
+            
+            // Check for HTTPS (required for location on mobile)
+            checkHTTPS();
+        });
+
+        // ==================== MOBILE DETECTION & OPTIMIZATION ====================
+        function isMobileDevice() {
+            return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        }
+
+        function applyMobileOptimizations() {
+            // Force HTTPS if not already (location requires HTTPS on mobile)
+            if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
+                window.location.href = window.location.href.replace('http:', 'https:');
+            }
+            
+            // Add mobile-specific CSS
+            const mobileStyles = document.createElement('style');
+            mobileStyles.textContent = `
+                /* Larger touch targets for mobile */
+                .btn-share-location {
+                    padding: 15px !important;
+                    font-size: 1.2rem !important;
+                    margin: 20px 0;
+                }
+                
+                /* Prevent zoom on input focus */
+                input, select, textarea {
+                    font-size: 16px !important;
+                }
+                
+                /* Better scrolling */
+                .driver-list {
+                    -webkit-overflow-scrolling: touch;
+                }
+            `;
+            document.head.appendChild(mobileStyles);
+        }
+
+        function checkHTTPS() {
+            if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+                console.warn('Site not using HTTPS - location may not work on mobile');
+                showAlert('For location services to work, please use HTTPS. Mobile devices require secure connections for location access.', 'warning');
+            }
+        }
+
+        // ==================== PERMISSION TESTING ====================
+        function testFirebasePermissions() {
+            console.log('Testing Firebase permissions...');
+            
+            if (!db) return;
+            
+            // Test if we can read drivers
+            db.collection('drivers').limit(1).get()
+                .then((snapshot) => {
+                    console.log('✓ Read access OK:', snapshot.size, 'drivers found');
+                })
+                .catch((error) => {
+                    console.error('✗ Read access failed:', error);
+                    showAlert('Firebase permission error: ' + error.message + '. Please update Firestore rules.', 'error');
+                });
         }
 
         // ==================== LOGIN PAGE FUNCTIONS ====================
@@ -1351,10 +1489,19 @@
             }
         }
 
-        // ==================== REAL-TIME LOCATION SHARING ====================
+        // ==================== LOCATION PERMISSION FIXES ====================
         async function toggleLocationSharing() {
             if (!currentDriver || !db) {
                 showAlert('Please login as driver first', 'error');
+                return;
+            }
+            
+            // Test location before starting
+            const locationAvailable = await testLocationBeforeSharing();
+            
+            if (!locationAvailable && !currentDriver.isSharingLocation) {
+                showAlert('Location services not available. Please check permissions.', 'error');
+                showLocationSettingsGuide();
                 return;
             }
             
@@ -1365,7 +1512,35 @@
             }
         }
 
+        async function testLocationBeforeSharing() {
+            return new Promise((resolve) => {
+                if (!navigator.geolocation) {
+                    resolve(false);
+                    return;
+                }
+                
+                // Quick test with minimal options
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        console.log('Location test passed:', position.coords);
+                        resolve(true);
+                    },
+                    (error) => {
+                        console.log('Location test failed:', error.code);
+                        resolve(false);
+                    },
+                    { 
+                        enableHighAccuracy: false,
+                        timeout: 3000,
+                        maximumAge: Infinity 
+                    }
+                );
+            });
+        }
+
         async function startLocationSharing() {
+            console.log('Starting location sharing...');
+            
             if (!navigator.geolocation) {
                 showAlert('Geolocation is not supported by your browser/device', 'error');
                 return;
@@ -1373,86 +1548,325 @@
             
             const btn = document.getElementById('shareLocationBtn');
             const originalText = btn.innerHTML;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Starting...';
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Requesting Permission...';
             btn.disabled = true;
             
             try {
+                // Step 1: Check and request permission
                 const permission = await requestLocationPermission();
-                if (permission !== 'granted') {
-                    throw new Error('Location permission denied');
+                console.log('Location permission status:', permission);
+                
+                if (permission === 'denied') {
+                    throw new Error('Location permission denied. Please enable in browser settings.');
                 }
                 
-                const position = await getCurrentPosition();
+                if (permission === 'prompt') {
+                    showAlert('Please allow location access when prompted', 'info');
+                }
                 
+                // Step 2: Get initial position with timeout
+                const position = await getCurrentPositionWithTimeout();
+                console.log('Got initial position:', position.coords);
+                
+                // Step 3: Start watching position
                 locationWatchId = navigator.geolocation.watchPosition(
                     async (position) => {
+                        console.log('Location update received:', position.coords);
                         await updateDriverLocation(position);
                     },
                     (error) => {
-                        console.error('Geolocation error:', error);
-                        let errorMessage = 'Error getting location: ';
-                        switch(error.code) {
-                            case error.PERMISSION_DENIED:
-                                errorMessage += "Location permission denied. Please enable location services.";
-                                break;
-                            case error.POSITION_UNAVAILABLE:
-                                errorMessage += "Location information unavailable.";
-                                break;
-                            case error.TIMEOUT:
-                                errorMessage += "Location request timed out.";
-                                break;
-                            default:
-                                errorMessage += "Unknown error.";
-                        }
-                        
-                        showAlert(errorMessage, 'error');
-                        stopLocationSharing();
+                        console.error('Geolocation watch error:', error);
+                        handleLocationError(error);
                     },
                     {
-                        enableHighAccuracy: true,
+                        enableHighAccuracy: true,  // Use GPS
                         timeout: 15000,
-                        maximumAge: 5000,
-                        distanceFilter: 10
+                        maximumAge: 0,
+                        distanceFilter: 10  // Update every 10 meters
                     }
                 );
                 
-                await db.collection('drivers').doc(currentDriver.id).update({
-                    isSharingLocation: true,
-                    isOnline: true,
-                    lastUpdate: firebase.firestore.FieldValue.serverTimestamp(),
-                    location: {
-                        latitude: position.coords.latitude,
-                        longitude: position.coords.longitude,
-                        accuracy: position.coords.accuracy,
-                        speed: position.coords.speed || null,
-                        heading: position.coords.heading || null,
-                        altitude: position.coords.altitude || null,
-                        timestamp: firebase.firestore.FieldValue.serverTimestamp()
-                    }
-                });
+                // Step 4: Update Firestore
+                await updateDriverStatus(true, position);
                 
                 currentDriver.isSharingLocation = true;
                 updateDriverSharingStatus();
                 
-                showAlert('Location sharing started! Owner can now see your live location.', 'success');
+                console.log('Location sharing started successfully');
+                showAlert('Location sharing started! Owner can see your live location.', 'success');
+                
+                // Show location accuracy info
+                showAlert(`Location accuracy: ${Math.round(position.coords.accuracy)} meters`, 'info');
                 
             } catch (error) {
                 console.error('Error starting location sharing:', error);
-                
-                if (error.code === 1 || error.message.includes('permission')) {
-                    showAlert('Location permission denied. Please enable location services in your browser/app settings.', 'error');
-                } else {
-                    showAlert('Error starting location sharing: ' + error.message, 'error');
-                }
+                handleLocationError(error);
             } finally {
                 btn.innerHTML = originalText;
                 btn.disabled = false;
             }
         }
 
+        function requestLocationPermission() {
+            return new Promise((resolve, reject) => {
+                if (!navigator.permissions) {
+                    // For browsers that don't support permissions API
+                    navigator.geolocation.getCurrentPosition(
+                        () => resolve('granted'),
+                        (error) => {
+                            if (error.code === error.PERMISSION_DENIED) {
+                                resolve('denied');
+                            } else {
+                                resolve('prompt');
+                            }
+                        },
+                        { enableHighAccuracy: true, timeout: 5000 }
+                    );
+                    return;
+                }
+                
+                navigator.permissions.query({ name: 'geolocation' })
+                    .then(permissionStatus => {
+                        console.log('Permission state:', permissionStatus.state);
+                        
+                        if (permissionStatus.state === 'granted') {
+                            resolve('granted');
+                        } else if (permissionStatus.state === 'denied') {
+                            resolve('denied');
+                        } else {
+                            // 'prompt' state - need to request
+                            navigator.geolocation.getCurrentPosition(
+                                () => resolve('granted'),
+                                (error) => {
+                                    if (error.code === error.PERMISSION_DENIED) {
+                                        resolve('denied');
+                                    } else {
+                                        resolve('prompt');
+                                    }
+                                },
+                                { enableHighAccuracy: true, timeout: 5000 }
+                            );
+                        }
+                        
+                        // Listen for permission changes
+                        permissionStatus.onchange = function() {
+                            console.log('Permission changed to:', this.state);
+                            if (this.state === 'denied') {
+                                showAlert('Location permission was revoked', 'error');
+                                stopLocationSharing();
+                            }
+                        };
+                    })
+                    .catch(error => {
+                        console.error('Permission query error:', error);
+                        resolve('prompt');
+                    });
+            });
+        }
+
+        function getCurrentPositionWithTimeout() {
+            return new Promise((resolve, reject) => {
+                const timeoutId = setTimeout(() => {
+                    reject(new Error('Location request timed out. Please try again.'));
+                }, 15000);
+                
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        clearTimeout(timeoutId);
+                        resolve(position);
+                    },
+                    (error) => {
+                        clearTimeout(timeoutId);
+                        reject(error);
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 10000,
+                        maximumAge: 0
+                    }
+                );
+            });
+        }
+
+        function handleLocationError(error) {
+            console.error('Location error code:', error.code);
+            
+            let errorMessage = '';
+            let errorType = 'error';
+            
+            switch(error.code) {
+                case 1: // PERMISSION_DENIED
+                    errorMessage = 'Location permission denied. Please enable location services in your device settings.';
+                    errorType = 'error';
+                    showLocationSettingsGuide();
+                    break;
+                    
+                case 2: // POSITION_UNAVAILABLE
+                    errorMessage = 'Location information is unavailable. Please check your GPS signal.';
+                    errorType = 'error';
+                    break;
+                    
+                case 3: // TIMEOUT
+                    errorMessage = 'Location request timed out. Please try again in an open area.';
+                    errorType = 'warning';
+                    break;
+                    
+                default:
+                    errorMessage = 'An unknown error occurred: ' + error.message;
+                    errorType = 'error';
+            }
+            
+            showAlert(errorMessage, errorType);
+            stopLocationSharing();
+        }
+
+        function showLocationSettingsGuide() {
+            const settingsGuide = `
+                <div style="background: white; padding: 20px; border-radius: 10px; max-width: 500px; margin: 20px auto;">
+                    <h3 style="color: #1a73e8; margin-bottom: 15px;">
+                        <i class="fas fa-map-marker-alt"></i> Enable Location Services
+                    </h3>
+                    
+                    <div style="margin-bottom: 20px;">
+                        <h4><i class="fab fa-apple"></i> iPhone/iPad:</h4>
+                        <ol style="margin-left: 20px;">
+                            <li>Go to <strong>Settings</strong> app</li>
+                            <li>Tap <strong>Privacy & Security</strong></li>
+                            <li>Tap <strong>Location Services</strong></li>
+                            <li>Find and tap <strong>Safari</strong> or your browser</li>
+                            <li>Select <strong>While Using the App</strong> or <strong>Ask Next Time</strong></li>
+                            <li>Enable <strong>Precise Location</strong> (toggle ON)</li>
+                        </ol>
+                    </div>
+                    
+                    <div style="margin-bottom: 20px;">
+                        <h4><i class="fab fa-android"></i> Android:</h4>
+                        <ol style="margin-left: 20px;">
+                            <li>Go to <strong>Settings</strong> app</li>
+                            <li>Tap <strong>Location</strong></li>
+                            <li>Turn ON <strong>Location</strong></li>
+                            <li>Select <strong>High accuracy</strong> mode</li>
+                            <li>Open Chrome/Safari settings</li>
+                            <li>Go to <strong>Site settings</strong> → <strong>Location</strong></li>
+                            <li>Make sure it's <strong>Allowed</strong></li>
+                        </ol>
+                    </div>
+                    
+                    <button onclick="retryLocationSharing()" style="
+                        background: #0f9d58;
+                        color: white;
+                        border: none;
+                        padding: 12px 24px;
+                        border-radius: 8px;
+                        font-weight: bold;
+                        cursor: pointer;
+                        width: 100%;
+                        margin-top: 10px;
+                    ">
+                        <i class="fas fa-redo"></i> Retry Location Sharing
+                    </button>
+                    
+                    <button onclick="closeSettingsModal()" style="
+                        background: #db4437;
+                        color: white;
+                        border: none;
+                        padding: 12px 24px;
+                        border-radius: 8px;
+                        font-weight: bold;
+                        cursor: pointer;
+                        width: 100%;
+                        margin-top: 10px;
+                    ">
+                        <i class="fas fa-times"></i> Close
+                    </button>
+                </div>
+            `;
+            
+            document.getElementById('settingsContent').innerHTML = settingsGuide;
+            document.getElementById('settingsModal').style.display = 'flex';
+        }
+
+        function retryLocationSharing() {
+            closeSettingsModal();
+            setTimeout(() => {
+                startLocationSharing();
+            }, 1000);
+        }
+
+        function closeSettingsModal() {
+            document.getElementById('settingsModal').style.display = 'none';
+        }
+
+        async function updateDriverStatus(isSharing, position = null) {
+            if (!currentDriver || !db) return;
+            
+            try {
+                const updateData = {
+                    isSharingLocation: isSharing,
+                    isOnline: true,
+                    lastUpdate: firebase.firestore.FieldValue.serverTimestamp(),
+                    pin: currentDriver.pin // Include PIN for rule validation
+                };
+                
+                if (position && isSharing) {
+                    updateData.location = {
+                        latitude: position.coords.latitude,
+                        longitude: position.coords.longitude,
+                        accuracy: position.coords.accuracy,
+                        speed: position.coords.speed || 0,
+                        heading: position.coords.heading || null,
+                        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                    };
+                } else {
+                    updateData.location = null;
+                }
+                
+                await db.collection('drivers').doc(currentDriver.id).update(updateData);
+                
+            } catch (error) {
+                console.error('Update status error:', error);
+                throw error;
+            }
+        }
+
+        async function updateDriverLocation(position) {
+            if (!currentDriver || !db) return;
+            
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            const accuracy = position.coords.accuracy;
+            const speed = position.coords.speed || 0;
+            
+            if (!isValidLocation(lat, lng)) return;
+            
+            try {
+                await db.collection('drivers').doc(currentDriver.id).update({
+                    location: {
+                        latitude: lat,
+                        longitude: lng,
+                        accuracy: accuracy,
+                        speed: speed,
+                        heading: position.coords.heading || null,
+                        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                    },
+                    lastUpdate: firebase.firestore.FieldValue.serverTimestamp(),
+                    isOnline: true,
+                    isSharingLocation: true,
+                    pin: currentDriver.pin
+                });
+                
+                updateDriverLocationDisplay(lat, lng, accuracy, speed);
+                
+            } catch (error) {
+                console.error('Update location error:', error);
+                if (error.code === 'permission-denied') {
+                    showAlert('Permission denied. Please logout and login again.', 'error');
+                }
+            }
+        }
+
         async function stopLocationSharing() {
             const btn = document.getElementById('shareLocationBtn');
-            const originalText = btn.innerHTML;
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Stopping...';
             btn.disabled = true;
             
@@ -1462,10 +1876,7 @@
                     locationWatchId = null;
                 }
                 
-                await db.collection('drivers').doc(currentDriver.id).update({
-                    isSharingLocation: false,
-                    location: null
-                });
+                await updateDriverStatus(false);
                 
                 currentDriver.isSharingLocation = false;
                 updateDriverSharingStatus();
@@ -1473,92 +1884,12 @@
                 showAlert('Location sharing stopped', 'info');
                 
             } catch (error) {
-                console.error('Error stopping location sharing:', error);
+                console.error('Stop sharing error:', error);
+                showAlert('Error stopping sharing: ' + error.message, 'error');
             } finally {
-                btn.innerHTML = originalText;
+                btn.innerHTML = '<i class="fas fa-power-off"></i> START Sharing Location';
                 btn.disabled = false;
             }
-        }
-
-        async function updateDriverLocation(position) {
-            if (!currentDriver || !db) return;
-            
-            const latitude = position.coords.latitude;
-            const longitude = position.coords.longitude;
-            const accuracy = position.coords.accuracy;
-            const speed = position.coords.speed || 0;
-            const heading = position.coords.heading || null;
-            const altitude = position.coords.altitude || null;
-            
-            if (!isValidLocation(latitude, longitude)) {
-                console.warn('Invalid location received');
-                return;
-            }
-            
-            try {
-                await db.collection('drivers').doc(currentDriver.id).update({
-                    location: {
-                        latitude: latitude,
-                        longitude: longitude,
-                        accuracy: accuracy,
-                        speed: speed,
-                        heading: heading,
-                        altitude: altitude,
-                        timestamp: firebase.firestore.FieldValue.serverTimestamp()
-                    },
-                    lastUpdate: firebase.firestore.FieldValue.serverTimestamp(),
-                    isOnline: true
-                });
-                
-                currentDriver.location = {
-                    latitude: latitude,
-                    longitude: longitude,
-                    accuracy: accuracy,
-                    speed: speed,
-                    heading: heading
-                };
-                currentDriver.lastUpdate = new Date();
-                
-                updateDriverLocationDisplay(latitude, longitude, accuracy, speed);
-                
-            } catch (error) {
-                console.error('Error updating location:', error);
-                if (error.message.includes('permission') || error.code === 'permission-denied') {
-                    stopLocationSharing();
-                }
-            }
-        }
-
-        function requestLocationPermission() {
-            return new Promise((resolve, reject) => {
-                if (!navigator.permissions) {
-                    resolve('granted');
-                    return;
-                }
-                
-                navigator.permissions.query({name: 'geolocation'})
-                    .then(permissionStatus => {
-                        resolve(permissionStatus.state);
-                        
-                        permissionStatus.onchange = function() {
-                            if (this.state === 'denied') {
-                                stopLocationSharing();
-                                showAlert('Location permission was revoked. Sharing stopped.', 'error');
-                            }
-                        };
-                    })
-                    .catch(() => resolve('granted'));
-            });
-        }
-
-        function getCurrentPosition() {
-            return new Promise((resolve, reject) => {
-                navigator.geolocation.getCurrentPosition(resolve, reject, {
-                    enableHighAccuracy: true,
-                    timeout: 10000,
-                    maximumAge: 0
-                });
-            });
         }
 
         function isValidLocation(lat, lng) {
@@ -1903,6 +2234,12 @@
             document.getElementById('driverPhoneDisplay').textContent = currentDriver.phone;
             document.getElementById('driverStatusDisplay').textContent = currentDriver.isOnline ? 'Online' : 'Offline';
             
+            // Show location instructions
+            const instructions = document.getElementById('locationInstructions');
+            if (instructions) {
+                instructions.style.display = 'block';
+            }
+            
             updateDriverSharingStatus();
             listenToDriverUpdates();
         }
@@ -1982,6 +2319,13 @@
             document.getElementById('centerBtn').addEventListener('click', centerMap);
             document.getElementById('viewAllBtn').addEventListener('click', viewAllDrivers);
             document.getElementById('shareLocationBtn').addEventListener('click', toggleLocationSharing);
+            
+            // Close settings modal when clicking outside
+            document.getElementById('settingsModal').addEventListener('click', function(event) {
+                if (event.target === this) {
+                    closeSettingsModal();
+                }
+            });
         }
 
         function initMap() {
@@ -2112,8 +2456,12 @@
                 document.getElementById('driverDashboard').style.display = 'none';
                 document.getElementById('loginContainer').style.display = 'flex';
                 
-                document.getElementById('ownerEmail').value = 'owner@traveltracker.com';
-                document.getElementById('ownerPassword').value = 'password123';
+                // Close any open modals
+                document.getElementById('settingsModal').style.display = 'none';
+                document.getElementById('addDriverModal').style.display = 'none';
+                
+                document.getElementById('ownerEmail').value = '';
+                document.getElementById('ownerPassword').value = '';
                 document.getElementById('driverName').value = '';
                 document.getElementById('driverPin').value = '';
                 document.getElementById('registerName').value = '';
@@ -2131,71 +2479,31 @@
 
         // ==================== ALERT SYSTEM ====================
         function showAlert(message, type = 'error') {
+            // Remove existing alerts
+            const existingAlerts = document.querySelectorAll('.alert');
+            existingAlerts.forEach(alert => {
+                alert.style.animation = 'slideOut 0.3s ease';
+                setTimeout(() => {
+                    if (alert.parentNode) alert.remove();
+                }, 300);
+            });
+            
             const alertDiv = document.createElement('div');
             alertDiv.className = `alert alert-${type}`;
             alertDiv.innerHTML = `
-                <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'info' ? 'info-circle' : 'exclamation-circle'}"></i>
+                <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'info' ? 'info-circle' : type === 'warning' ? 'exclamation-triangle' : 'exclamation-circle'}"></i>
                 <span>${message}</span>
             `;
             
             document.body.appendChild(alertDiv);
             
             setTimeout(() => {
-                alertDiv.style.animation = 'slideOut 0.3s ease';
-                setTimeout(() => alertDiv.remove(), 300);
+                if (alertDiv.parentNode) {
+                    alertDiv.style.opacity = '0';
+                    alertDiv.style.transition = 'opacity 0.5s';
+                    setTimeout(() => alertDiv.remove(), 500);
+                }
             }, 5000);
-        }
-
-        function addAlertStyles() {
-            const style = document.createElement('style');
-            style.textContent = `
-                .alert {
-                    position: fixed;
-                    top: 20px;
-                    right: 20px;
-                    padding: 15px 20px;
-                    border-radius: 8px;
-                    color: white;
-                    font-weight: 600;
-                    z-index: 10000;
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-                    animation: slideIn 0.3s ease;
-                    display: flex;
-                    align-items: center;
-                    gap: 10px;
-                    max-width: 350px;
-                }
-                .alert-success {
-                    background: linear-gradient(45deg, #0f9d58, #0a8043);
-                }
-                .alert-error {
-                    background: linear-gradient(45deg, #db4437, #c5382b);
-                }
-                .alert-info {
-                    background: linear-gradient(45deg, #1a73e8, #0d47a1);
-                }
-                @keyframes slideIn {
-                    from {
-                        transform: translateX(100%);
-                        opacity: 0;
-                    }
-                    to {
-                        transform: translateX(0);
-                        opacity: 1;
-                    }
-                }
-                @keyframes slideOut {
-                    from {
-                        transform: translateX(0);
-                        opacity: 1;
-                    }
-                    to {
-                        transform: translateX(100%);
-                        opacity: 0;
-                    }
-                }
-            `;
-            document.head.appendChild(style);
         }
 
         // Close modal when clicking outside
