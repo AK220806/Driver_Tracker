@@ -19,6 +19,7 @@
     <meta name="theme-color" content="#1a73e8">
     
     <style>
+        /* (Your existing styles remain the same) */
         * {
             margin: 0;
             padding: 0;
@@ -1038,6 +1039,16 @@
                 auth = firebase.auth();
                 console.log('Firebase initialized successfully');
                 
+                // Enable offline persistence
+                db.enablePersistence()
+                    .catch((err) => {
+                        if (err.code == 'failed-precondition') {
+                            console.log('Multiple tabs open, persistence enabled in one tab only');
+                        } else if (err.code == 'unimplemented') {
+                            console.log('Browser doesn\'t support persistence');
+                        }
+                    });
+                
             } catch (error) {
                 console.error('Firebase initialization error:', error);
                 showAlert('Firebase initialization failed: ' + error.message, 'error');
@@ -1046,7 +1057,34 @@
             // Setup UI
             setupLoginPage();
             setupDashboardButtons();
+            
+            // Check for existing auth
+            checkAuthState();
         });
+
+        // ==================== AUTH STATE CHECK ====================
+        function checkAuthState() {
+            if (!auth) return;
+            
+            auth.onAuthStateChanged(async (user) => {
+                if (user) {
+                    try {
+                        const ownerDoc = await db.collection('owners').doc(user.uid).get();
+                        if (ownerDoc.exists) {
+                            currentUser = {
+                                uid: user.uid,
+                                email: user.email,
+                                name: ownerDoc.data().name,
+                                type: 'owner'
+                            };
+                            showOwnerDashboard();
+                        }
+                    } catch (error) {
+                        console.error('Error checking auth state:', error);
+                    }
+                }
+            });
+        }
 
         // ==================== LOGIN PAGE FUNCTIONS ====================
         function setupLoginPage() {
@@ -1223,26 +1261,20 @@
             btn.disabled = true;
             
             try {
-                const driversSnapshot = await db.collection('drivers').get();
+                // Query drivers collection
+                const driversSnapshot = await db.collection('drivers')
+                    .where('name', '==', driverName)
+                    .where('pin', '==', pin)
+                    .get();
                 
-                let foundDriver = null;
-                let foundDriverId = null;
-                
-                driversSnapshot.forEach(doc => {
-                    const driver = doc.data();
-                    if (driver.pin === pin && driver.name.toLowerCase() === driverName.toLowerCase()) {
-                        foundDriver = driver;
-                        foundDriverId = doc.id;
-                    }
-                });
-                
-                if (foundDriver) {
+                if (!driversSnapshot.empty) {
+                    const driverDoc = driversSnapshot.docs[0];
                     currentDriver = {
-                        id: foundDriverId,
-                        ...foundDriver
+                        id: driverDoc.id,
+                        ...driverDoc.data()
                     };
                     
-                    await db.collection('drivers').doc(foundDriverId).update({
+                    await db.collection('drivers').doc(driverDoc.id).update({
                         isOnline: true,
                         lastLogin: firebase.firestore.FieldValue.serverTimestamp()
                     });
@@ -1253,6 +1285,7 @@
                 }
                 
             } catch (error) {
+                console.error('Login error:', error);
                 showLoginError(getFirebaseErrorMessage(error));
             } finally {
                 btn.innerHTML = originalText;
@@ -1288,6 +1321,17 @@
             btn.disabled = true;
             
             try {
+                // Check if driver with same name already exists for this owner
+                const existingDriver = await db.collection('drivers')
+                    .where('ownerId', '==', currentUser.uid)
+                    .where('name', '==', name)
+                    .get();
+                
+                if (!existingDriver.empty) {
+                    showDriverError('A driver with this name already exists');
+                    return;
+                }
+                
                 const driverId = 'DRV' + Date.now().toString().substr(-6) + Math.floor(Math.random() * 100);
                 
                 await db.collection('drivers').doc(driverId).set({
@@ -1327,7 +1371,7 @@
             }
         }
 
-        // ==================== FIXED LOCATION FUNCTIONS ====================
+        // ==================== LOCATION SHARING FUNCTIONS ====================
         async function toggleLocationSharing() {
             if (!currentDriver || !db) {
                 showAlert('Please login as driver first', 'error');
@@ -1350,42 +1394,20 @@
             }
             
             const btn = document.getElementById('shareLocationBtn');
-            const shareBtnText = document.getElementById('shareBtnText');
-            
-            if (!btn) {
-                showAlert('Error: Share button not found', 'error');
-                return;
-            }
+            if (!btn) return;
             
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Requesting Permission...';
             btn.disabled = true;
             
             try {
-                // Get current position with improved settings
+                // Get current position
                 const position = await getCurrentPositionWithTimeout();
+                console.log('Got position:', position.coords);
                 
-                // Update last position
+                // Store last position
                 lastPosition = position;
                 
-                // Start watching position continuously
-                locationWatchId = navigator.geolocation.watchPosition(
-                    async (position) => {
-                        console.log('Location update:', position.coords.latitude, position.coords.longitude);
-                        await updateDriverLocation(position);
-                    },
-                    (error) => {
-                        console.error('Geolocation watch error:', error);
-                        handleLocationError(error);
-                    },
-                    {
-                        enableHighAccuracy: true,
-                        timeout: 10000,
-                        maximumAge: 0,
-                        distanceFilter: 5 // Update every 5 meters
-                    }
-                );
-                
-                // Update Firestore with initial position
+                // Update Firestore with initial location
                 const locationData = {
                     latitude: position.coords.latitude,
                     longitude: position.coords.longitude,
@@ -1402,9 +1424,47 @@
                     location: locationData
                 });
                 
+                // Start watching position
+                locationWatchId = navigator.geolocation.watchPosition(
+                    async (position) => {
+                        console.log('Location update:', position.coords.latitude, position.coords.longitude);
+                        
+                        const updatedLocation = {
+                            latitude: position.coords.latitude,
+                            longitude: position.coords.longitude,
+                            accuracy: position.coords.accuracy,
+                            speed: position.coords.speed || 0,
+                            heading: position.coords.heading || null,
+                            timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                        };
+                        
+                        await db.collection('drivers').doc(currentDriver.id).update({
+                            location: updatedLocation,
+                            lastUpdate: firebase.firestore.FieldValue.serverTimestamp()
+                        });
+                        
+                        // Update UI
+                        updateDriverLocationDisplay(
+                            position.coords.latitude,
+                            position.coords.longitude,
+                            position.coords.accuracy,
+                            position.coords.speed || 0
+                        );
+                    },
+                    (error) => {
+                        console.error('Watch error:', error);
+                        handleLocationError(error);
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 10000,
+                        maximumAge: 0,
+                        distanceFilter: 5
+                    }
+                );
+                
                 // Update local state
                 currentDriver.isSharingLocation = true;
-                currentDriver.location = locationData;
                 
                 // Update UI
                 updateDriverSharingStatus();
@@ -1421,10 +1481,8 @@
                 console.error('Error starting location sharing:', error);
                 handleLocationError(error);
             } finally {
-                if (btn) {
-                    btn.innerHTML = '<i class="fas fa-power-off"></i> <span id="shareBtnText">STOP Sharing Location</span>';
-                    btn.disabled = false;
-                }
+                btn.innerHTML = '<i class="fas fa-power-off"></i> <span id="shareBtnText">STOP Sharing Location</span>';
+                btn.disabled = false;
             }
         }
 
@@ -1432,12 +1490,7 @@
             console.log('Stopping location sharing...');
             
             const btn = document.getElementById('shareLocationBtn');
-            const shareBtnText = document.getElementById('shareBtnText');
-            
-            if (!btn) {
-                console.error('Share button not found');
-                return;
-            }
+            if (!btn) return;
             
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Stopping...';
             btn.disabled = true;
@@ -1458,7 +1511,6 @@
                 
                 // Update local state
                 currentDriver.isSharingLocation = false;
-                currentDriver.location = null;
                 
                 // Update UI
                 updateDriverSharingStatus();
@@ -1469,50 +1521,15 @@
                 console.error('Error stopping location sharing:', error);
                 showAlert('Error stopping sharing: ' + error.message, 'error');
             } finally {
-                if (btn) {
-                    btn.innerHTML = '<i class="fas fa-power-off"></i> <span id="shareBtnText">START Sharing Location</span>';
-                    btn.disabled = false;
-                }
-            }
-        }
-
-        async function updateDriverLocation(position) {
-            if (!currentDriver || !db || !position) return;
-            
-            try {
-                const locationData = {
-                    latitude: position.coords.latitude,
-                    longitude: position.coords.longitude,
-                    accuracy: position.coords.accuracy,
-                    speed: position.coords.speed || 0,
-                    heading: position.coords.heading || null,
-                    timestamp: firebase.firestore.FieldValue.serverTimestamp()
-                };
-                
-                await db.collection('drivers').doc(currentDriver.id).update({
-                    location: locationData,
-                    lastUpdate: firebase.firestore.FieldValue.serverTimestamp(),
-                    isSharingLocation: true,
-                    isOnline: true
-                });
-                
-                // Update UI with new location
-                updateDriverLocationDisplay(
-                    position.coords.latitude,
-                    position.coords.longitude,
-                    position.coords.accuracy,
-                    position.coords.speed || 0
-                );
-                
-            } catch (error) {
-                console.error('Error updating location:', error);
+                btn.innerHTML = '<i class="fas fa-power-off"></i> <span id="shareBtnText">START Sharing Location</span>';
+                btn.disabled = false;
             }
         }
 
         function getCurrentPositionWithTimeout() {
             return new Promise((resolve, reject) => {
                 const timeoutId = setTimeout(() => {
-                    reject(new Error('Location request timed out. Please check GPS signal.'));
+                    reject(new Error('Location request timed out'));
                 }, 15000);
                 
                 navigator.geolocation.getCurrentPosition(
@@ -1553,7 +1570,6 @@
             }
             
             showAlert(message, 'error');
-            stopLocationSharing();
         }
 
         function showLocationSettingsGuide() {
@@ -1616,12 +1632,6 @@
             }, 1000);
         }
 
-        function isValidLocation(lat, lng) {
-            return lat >= -90 && lat <= 90 && 
-                   lng >= -180 && lng <= 180 &&
-                   lat !== 0 && lng !== 0;
-        }
-
         // ==================== DRIVER UI UPDATES ====================
         function updateDriverSharingStatus() {
             if (!currentDriver) return;
@@ -1673,12 +1683,6 @@
             if (locationUpdates) {
                 locationUpdates.style.display = isSharing ? 'block' : 'none';
             }
-            
-            // Update last update time if available
-            const lastUpdateEl = document.getElementById('driverLastUpdate');
-            if (lastUpdateEl && currentDriver.lastUpdate) {
-                lastUpdateEl.textContent = formatTime(currentDriver.lastUpdate);
-            }
         }
 
         function updateDriverLocationDisplay(latitude, longitude, accuracy, speed) {
@@ -1702,7 +1706,7 @@
             }
         }
 
-        // ==================== REAL-TIME DRIVER UPDATES ====================
+        // ==================== REAL-TIME DRIVER UPDATES FOR OWNER ====================
         function listenToDrivers() {
             if (!db || !currentUser) {
                 console.error('Cannot listen to drivers: db or currentUser not set');
@@ -1749,13 +1753,16 @@
                 const driver = doc.data();
                 const driverId = doc.id;
                 
+                // Check if location exists
+                const hasLocation = driver.location && driver.location.latitude && driver.location.longitude;
+                
                 driversHTML += `
                     <div class="driver-item ${driver.isSharingLocation ? 'active' : ''}" onclick="focusDriverOnMap('${driverId}')">
                         <div class="driver-name">${driver.name}</div>
                         <div class="driver-status">
                             <span class="status-dot ${driver.isSharingLocation ? 'status-online' : 'status-offline'}"></span>
                             <span>${driver.isSharingLocation ? 'Sharing Location' : 'Not Sharing'}</span>
-                            ${driver.isSharingLocation ? '<span class="realtime-badge" style="font-size: 0.7rem; padding: 2px 8px;">LIVE</span>' : ''}
+                            ${driver.isSharingLocation && hasLocation ? '<span class="realtime-badge" style="font-size: 0.7rem; padding: 2px 8px;">LIVE</span>' : ''}
                         </div>
                         <div style="font-size: 0.8rem; color: #5f6368; margin-top: 0.25rem;">
                             <i class="fas fa-car"></i> ${driver.vehicle}
@@ -1763,6 +1770,11 @@
                         <div style="font-size: 0.8rem; color: #5f6368; margin-top: 0.25rem;">
                             <i class="fas fa-phone"></i> ${driver.phone}
                         </div>
+                        ${driver.isSharingLocation && hasLocation ? `
+                            <div style="font-size: 0.75rem; color: #0f9d58; margin-top: 0.25rem;">
+                                <i class="fas fa-map-marker-alt"></i> Lat: ${driver.location.latitude.toFixed(4)}, Lng: ${driver.location.longitude.toFixed(4)}
+                            </div>
+                        ` : ''}
                         <div style="font-size: 0.75rem; color: #999; margin-top: 0.25rem;">
                             <i class="fas fa-clock"></i> ${driver.lastUpdate ? formatTime(driver.lastUpdate.toDate()) : 'No location data'}
                         </div>
@@ -1845,9 +1857,18 @@
                 const driver = doc.data();
                 const driverId = doc.id;
                 
-                if (driver.isSharingLocation && driver.location && driver.location.latitude && driver.location.longitude) {
+                // Check if driver has valid location
+                if (driver.isSharingLocation && 
+                    driver.location && 
+                    driver.location.latitude && 
+                    driver.location.longitude &&
+                    !isNaN(driver.location.latitude) &&
+                    !isNaN(driver.location.longitude)) {
+                    
                     const lat = driver.location.latitude;
                     const lng = driver.location.longitude;
+                    
+                    console.log('Adding marker for driver:', driver.name, lat, lng);
                     
                     // Create custom marker
                     const markerIcon = L.divIcon({
@@ -1873,6 +1894,8 @@
                                 <div style="font-size: 0.85rem; color: #5f6368;">Current Location</div>
                                 <div style="font-weight: 600;">Lat: ${lat.toFixed(6)}</div>
                                 <div style="font-weight: 600;">Lng: ${lng.toFixed(6)}</div>
+                                ${driver.location.speed ? `<div>Speed: ${(driver.location.speed * 3.6).toFixed(1)} km/h</div>` : ''}
+                                ${driver.location.accuracy ? `<div>Accuracy: ${Math.round(driver.location.accuracy)}m</div>` : ''}
                             </div>
                             <div style="color: #0f9d58; font-weight: 600; font-size: 0.9rem;">
                                 <i class="fas fa-map-marker-alt"></i> LIVE LOCATION
@@ -1887,6 +1910,12 @@
                     driverMarkers[driverId] = marker;
                 }
             });
+            
+            // If there are markers, fit bounds
+            if (Object.keys(driverMarkers).length > 0) {
+                const bounds = L.latLngBounds(Object.values(driverMarkers).map(m => m.getLatLng()));
+                map.fitBounds(bounds, { padding: [50, 50] });
+            }
         }
 
         function focusDriverOnMap(driverId) {
@@ -1942,12 +1971,26 @@
         function listenToDriverUpdates() {
             if (!db || !currentDriver) return;
             
+            if (driverLocationUpdates) {
+                driverLocationUpdates();
+            }
+            
             driverLocationUpdates = db.collection('drivers').doc(currentDriver.id)
                 .onSnapshot((doc) => {
                     if (doc.exists) {
                         const updatedData = doc.data();
                         currentDriver = { id: doc.id, ...updatedData };
                         updateDriverSharingStatus();
+                        
+                        // Update location display if available
+                        if (updatedData.location) {
+                            updateDriverLocationDisplay(
+                                updatedData.location.latitude,
+                                updatedData.location.longitude,
+                                updatedData.location.accuracy || 0,
+                                updatedData.location.speed || 0
+                            );
+                        }
                     }
                 }, (error) => {
                     console.error('Error listening to driver updates:', error);
@@ -2155,7 +2198,7 @@
                 }
                 
                 // Sign out from Firebase
-                if (auth && currentUser && currentUser.type === 'owner') {
+                if (auth) {
                     await auth.signOut();
                 }
                 
@@ -2182,6 +2225,8 @@
                 document.getElementById('registerName').value = '';
                 document.getElementById('registerEmail').value = '';
                 document.getElementById('registerPassword').value = '';
+                
+                showAlert('Logged out successfully', 'info');
                 
             } catch (error) {
                 console.error('Error logging out:', error);
