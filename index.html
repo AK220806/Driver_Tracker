@@ -277,15 +277,17 @@
             border-left: 4px solid #1a73e8;
             transition: all 0.3s;
             position: relative;
+            cursor: pointer;
         }
 
         .driver-item:hover {
             background: #e8f0fe;
+            transform: translateX(5px);
         }
 
         .driver-item.active {
             background: #e8f0fe;
-            border-left-color: #0d47a1;
+            border-left-color: #0f9d58;
         }
 
         .driver-header {
@@ -339,6 +341,7 @@
 
         .status-online {
             background: #0f9d58;
+            animation: pulse 2s infinite;
         }
 
         .status-offline {
@@ -374,6 +377,7 @@
         #map {
             flex: 1;
             min-height: 500px;
+            z-index: 1;
         }
 
         .map-controls {
@@ -401,9 +405,17 @@
             color: white;
         }
 
+        .btn-primary:hover {
+            background: #0d47a1;
+        }
+
         .btn-secondary {
             background: #f1f3f4;
             color: #1a73e8;
+        }
+
+        .btn-secondary:hover {
+            background: #e8f0fe;
         }
 
         /* Modal */
@@ -449,6 +461,10 @@
             color: #5f6368;
         }
 
+        .close-modal:hover {
+            color: #333;
+        }
+
         /* Driver Interface */
         .driver-container {
             display: none;
@@ -491,6 +507,7 @@
 
         .location-sharing {
             color: #0f9d58;
+            animation: pulse 2s infinite;
         }
 
         .location-not-sharing {
@@ -517,9 +534,17 @@
             color: white;
         }
 
+        .btn-share-on:hover {
+            background: #0a8043;
+        }
+
         .btn-share-off {
             background: #db4437;
             color: white;
+        }
+
+        .btn-share-off:hover {
+            background: #c5382b;
         }
 
         .driver-info {
@@ -677,9 +702,17 @@
             color: white;
         }
 
+        .btn-confirm-yes:hover {
+            background: #c5382b;
+        }
+
         .btn-confirm-no {
             background: #f1f3f4;
             color: #5f6368;
+        }
+
+        .btn-confirm-no:hover {
+            background: #e8f0fe;
         }
 
         @keyframes spin {
@@ -689,13 +722,13 @@
 
         @keyframes pulse {
             0% {
-                box-shadow: 0 0 0 0 rgba(26, 115, 232, 0.7);
+                box-shadow: 0 0 0 0 rgba(15, 157, 88, 0.7);
             }
             70% {
-                box-shadow: 0 0 0 10px rgba(26, 115, 232, 0);
+                box-shadow: 0 0 0 10px rgba(15, 157, 88, 0);
             }
             100% {
-                box-shadow: 0 0 0 0 rgba(26, 115, 232, 0);
+                box-shadow: 0 0 0 0 rgba(15, 157, 88, 0);
             }
         }
 
@@ -904,6 +937,10 @@
                         <span>Speed:</span>
                         <strong id="currentSpeed">0 km/h</strong>
                     </div>
+                    <div class="location-update-item">
+                        <span>Last Update:</span>
+                        <strong id="driverLastUpdate">-</strong>
+                    </div>
                 </div>
             </div>
             
@@ -1045,6 +1082,17 @@
                 firebase.initializeApp(firebaseConfig);
                 db = firebase.firestore();
                 auth = firebase.auth();
+                
+                // Enable persistence for offline support
+                db.enablePersistence()
+                    .catch((err) => {
+                        if (err.code == 'failed-precondition') {
+                            console.log('Multiple tabs open, persistence disabled');
+                        } else if (err.code == 'unimplemented') {
+                            console.log('Browser doesn\'t support persistence');
+                        }
+                    });
+                
                 console.log('Firebase initialized successfully');
             } catch (error) {
                 console.error('Firebase initialization error:', error);
@@ -1321,15 +1369,28 @@
 
         // ==================== REAL-TIME DRIVER LISTENER ====================
         function listenToDrivers() {
-            if (!db || !currentUser) return;
+            if (!db || !currentUser) {
+                console.log('Cannot listen to drivers: missing db or currentUser');
+                return;
+            }
             
             if (driversUnsubscribe) {
                 driversUnsubscribe();
             }
             
+            console.log('Setting up real-time listener for drivers');
+            
             driversUnsubscribe = db.collection('drivers')
                 .where('ownerId', '==', currentUser.uid)
                 .onSnapshot((snapshot) => {
+                    console.log('Driver snapshot received, size:', snapshot.size);
+                    
+                    snapshot.docChanges().forEach(change => {
+                        if (change.type === 'modified') {
+                            console.log('Driver modified:', change.doc.id, change.doc.data());
+                        }
+                    });
+                    
                     updateDriverList(snapshot);
                     updateStats(snapshot);
                     updateMapMarkers(snapshot);
@@ -1356,24 +1417,34 @@
             snapshot.forEach(doc => {
                 const driver = doc.data();
                 const driverId = doc.id;
+                const hasLocation = driver.location && driver.location.latitude && driver.location.longitude;
                 
                 html += `
-                    <div class="driver-item ${driver.isSharingLocation ? 'active' : ''}">
+                    <div class="driver-item ${driver.isSharingLocation ? 'active' : ''}" onclick="focusDriverOnMap('${driverId}')">
                         <div class="driver-header">
                             <span class="driver-name">${driver.name}</span>
                             <div class="driver-actions">
-                                <button class="btn-icon delete" onclick="confirmDeleteDriver('${driverId}', '${driver.name}')" title="Delete Driver">
+                                <button class="btn-icon delete" onclick="event.stopPropagation(); confirmDeleteDriver('${driverId}', '${driver.name}')" title="Delete Driver">
                                     <i class="fas fa-trash"></i>
                                 </button>
                             </div>
                         </div>
                         <div class="driver-status">
                             <span class="status-dot ${driver.isSharingLocation ? 'status-online' : 'status-offline'}"></span>
-                            <span>${driver.isSharingLocation ? 'Sharing' : 'Not Sharing'}</span>
+                            <span>${driver.isSharingLocation ? 'Sharing Live Location' : 'Not Sharing'}</span>
                             ${driver.isSharingLocation ? '<span class="realtime-badge">LIVE</span>' : ''}
                         </div>
                         <div><i class="fas fa-car"></i> ${driver.vehicle}</div>
                         <div><i class="fas fa-phone"></i> ${driver.phone}</div>
+                        ${hasLocation ? `
+                            <div style="font-size: 0.8rem; color: #0f9d58; margin-top: 5px;">
+                                <i class="fas fa-map-marker-alt"></i> 
+                                ${driver.location.latitude.toFixed(4)}, ${driver.location.longitude.toFixed(4)}
+                            </div>
+                        ` : ''}
+                        <div style="font-size: 0.75rem; color: #999; margin-top: 5px;">
+                            <i class="fas fa-clock"></i> ${driver.lastUpdate ? formatTime(driver.lastUpdate) : 'No location data'}
+                        </div>
                     </div>
                 `;
             });
@@ -1403,39 +1474,81 @@
         }
 
         function updateMapMarkers(snapshot) {
-            if (!map) return;
+            if (!map) {
+                console.log('Map not initialized yet');
+                return;
+            }
             
+            console.log('Updating map markers...');
+            
+            // Clear existing markers
             Object.values(driverMarkers).forEach(marker => {
                 if (marker) map.removeLayer(marker);
             });
             driverMarkers = {};
+            
+            let hasActiveMarkers = false;
             
             snapshot.forEach(doc => {
                 const driver = doc.data();
                 const driverId = doc.id;
                 
                 if (driver.isSharingLocation && driver.location) {
-                    const { latitude, longitude } = driver.location;
+                    const lat = driver.location.latitude;
+                    const lng = driver.location.longitude;
                     
-                    const marker = L.marker([latitude, longitude], {
-                        icon: L.divIcon({
-                            html: `<div style="background: #0f9d58; color: white; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 3px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.3);">
-                                    <i class="fas fa-car"></i>
+                    if (lat && lng && !isNaN(lat) && !isNaN(lng)) {
+                        console.log(`Adding marker for ${driver.name} at ${lat}, ${lng}`);
+                        hasActiveMarkers = true;
+                        
+                        // Create custom marker
+                        const markerIcon = L.divIcon({
+                            className: 'driver-marker',
+                            html: `<div style="background: #0f9d58; color: white; width: 45px; height: 45px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 3px solid white; box-shadow: 0 0 20px rgba(15,157,88,0.5); animation: pulse 2s infinite;">
+                                    <i class="fas fa-car" style="font-size: 20px;"></i>
                                   </div>`,
-                            iconSize: [40, 40],
-                            iconAnchor: [20, 40]
-                        })
-                    }).addTo(map);
-                    
-                    marker.bindPopup(`
-                        <b>${driver.name}</b><br>
-                        <i class="fas fa-car"></i> ${driver.vehicle}<br>
-                        <i class="fas fa-phone"></i> ${driver.phone}
-                    `);
-                    
-                    driverMarkers[driverId] = marker;
+                            iconSize: [45, 45],
+                            iconAnchor: [22, 45]
+                        });
+                        
+                        const marker = L.marker([lat, lng], {
+                            icon: markerIcon
+                        }).addTo(map);
+                        
+                        // Create popup content
+                        const popupContent = `
+                            <div style="min-width: 200px;">
+                                <div style="font-weight: bold; font-size: 16px; color: #1a73e8; margin-bottom: 5px;">${driver.name}</div>
+                                <div style="margin-bottom: 3px;"><i class="fas fa-car"></i> ${driver.vehicle}</div>
+                                <div style="margin-bottom: 3px;"><i class="fas fa-phone"></i> ${driver.phone}</div>
+                                <div style="background: #f0f7ff; padding: 8px; border-radius: 5px; margin: 8px 0;">
+                                    <div style="font-weight: bold; color: #0f9d58;">📍 Current Location</div>
+                                    <div>Lat: ${lat.toFixed(6)}</div>
+                                    <div>Lng: ${lng.toFixed(6)}</div>
+                                </div>
+                                <div style="color: #0f9d58; font-weight: bold;">
+                                    <i class="fas fa-circle" style="font-size: 10px;"></i> LIVE TRACKING
+                                </div>
+                                <div style="color: #666; font-size: 0.8rem; margin-top: 5px;">
+                                    Last updated: ${driver.lastUpdate ? formatTime(driver.lastUpdate) : 'Just now'}
+                                </div>
+                            </div>
+                        `;
+                        
+                        marker.bindPopup(popupContent);
+                        driverMarkers[driverId] = marker;
+                    }
                 }
             });
+            
+            // Fit bounds if there are markers
+            if (hasActiveMarkers) {
+                const markers = Object.values(driverMarkers);
+                if (markers.length > 0) {
+                    const bounds = L.latLngBounds(markers.map(m => m.getLatLng()));
+                    map.fitBounds(bounds, { padding: [50, 50] });
+                }
+            }
         }
 
         // ==================== DASHBOARD FUNCTIONS ====================
@@ -1451,6 +1564,13 @@
             
             if (!mapInitialized) {
                 initMap();
+            } else {
+                // Refresh map
+                setTimeout(() => {
+                    if (map) {
+                        map.invalidateSize();
+                    }
+                }, 500);
             }
             
             listenToDrivers();
@@ -1470,13 +1590,42 @@
             if (nameEl) nameEl.textContent = currentDriver.name || '-';
             if (vehicleEl) vehicleEl.textContent = currentDriver.vehicle || '-';
             if (phoneEl) phoneEl.textContent = currentDriver.phone || '-';
-            if (statusEl) {
-                statusEl.textContent = currentDriver.isSharingLocation ? 'Sharing Location' : 'Online';
-                statusEl.style.color = currentDriver.isSharingLocation ? '#0f9d58' : '#1a73e8';
-            }
             
             // Reset sharing status display
             updateSharingStatus(currentDriver.isSharingLocation || false);
+            
+            // Listen for driver updates
+            listenToDriverUpdates();
+        }
+
+        function listenToDriverUpdates() {
+            if (!db || !currentDriver) return;
+            
+            if (driverLocationUpdates) {
+                driverLocationUpdates();
+            }
+            
+            driverLocationUpdates = db.collection('drivers').doc(currentDriver.id)
+                .onSnapshot((doc) => {
+                    if (doc.exists) {
+                        const updatedData = doc.data();
+                        currentDriver = {
+                            id: doc.id,
+                            ...updatedData
+                        };
+                        
+                        // Update UI
+                        updateSharingStatus(updatedData.isSharingLocation || false);
+                        
+                        if (updatedData.location) {
+                            updateLocationDisplay(updatedData.location);
+                        }
+                        
+                        console.log('Driver updated:', updatedData);
+                    }
+                }, (error) => {
+                    console.error('Error listening to driver updates:', error);
+                });
         }
 
         function initMap() {
@@ -1491,20 +1640,40 @@
                 return;
             }
             
-            map = L.map('map').setView([20.5937, 78.9629], 5);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap'
-            }).addTo(map);
-            
-            mapInitialized = true;
-            console.log('Map initialized');
+            try {
+                if (map) {
+                    map.remove();
+                }
+                
+                mapElement.innerHTML = '';
+                
+                // Initialize map with default view (India)
+                map = L.map('map').setView([20.5937, 78.9629], 5);
+                
+                // Add OpenStreetMap tiles
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© OpenStreetMap contributors',
+                    maxZoom: 19
+                }).addTo(map);
+                
+                mapInitialized = true;
+                console.log('Map initialized successfully');
+                
+                // Force map to resize properly
+                setTimeout(() => {
+                    map.invalidateSize();
+                }, 500);
+                
+            } catch (error) {
+                console.error('Error initializing map:', error);
+                mapInitialized = false;
+            }
         }
 
         // ==================== LOCATION SHARING ====================
         function checkLocationPermission() {
             return new Promise((resolve) => {
                 if (!navigator.permissions) {
-                    // If permissions API not supported, try to get location directly
                     resolve('prompt');
                     return;
                 }
@@ -1544,11 +1713,9 @@
             }
             
             const btn = document.getElementById('shareLocationBtn');
-            const shareBtnText = document.getElementById('shareBtnText');
-            
             if (!btn) return;
             
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Requesting Location...';
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Getting Location...';
             btn.disabled = true;
             
             try {
@@ -1585,10 +1752,12 @@
                     location: locationData
                 });
                 
+                console.log('Location saved to Firestore');
+                
                 // Start watching position
                 locationWatchId = navigator.geolocation.watchPosition(
                     async (pos) => {
-                        console.log('Location update:', pos.coords);
+                        console.log('Location update received');
                         const updateData = {
                             latitude: pos.coords.latitude,
                             longitude: pos.coords.longitude,
@@ -1768,6 +1937,7 @@
             const lngEl = document.getElementById('currentLng');
             const accEl = document.getElementById('currentAccuracy');
             const speedEl = document.getElementById('currentSpeed');
+            const lastUpdateEl = document.getElementById('driverLastUpdate');
             
             if (latEl) latEl.textContent = loc.latitude ? loc.latitude.toFixed(6) : '-';
             if (lngEl) lngEl.textContent = loc.longitude ? loc.longitude.toFixed(6) : '-';
@@ -1781,9 +1951,44 @@
                     speedEl.textContent = '0 km/h';
                 }
             }
+            
+            if (lastUpdateEl) {
+                lastUpdateEl.textContent = formatTime(new Date());
+            }
+        }
+
+        function focusDriverOnMap(driverId) {
+            const marker = driverMarkers[driverId];
+            if (marker && map) {
+                map.setView(marker.getLatLng(), 15);
+                marker.openPopup();
+            }
         }
 
         // ==================== HELPER FUNCTIONS ====================
+        function formatTime(timestamp) {
+            if (!timestamp) return '--:--:--';
+            
+            try {
+                let date;
+                if (timestamp.toDate) {
+                    date = timestamp.toDate();
+                } else if (timestamp instanceof Date) {
+                    date = timestamp;
+                } else {
+                    date = new Date(timestamp);
+                }
+                
+                return date.toLocaleTimeString([], { 
+                    hour: '2-digit', 
+                    minute: '2-digit', 
+                    second: '2-digit' 
+                });
+            } catch (e) {
+                return '--:--:--';
+            }
+        }
+
         function getFirebaseErrorMessage(error) {
             switch(error.code) {
                 case 'auth/email-already-in-use':
@@ -1956,7 +2161,10 @@
             if (driverLogoutBtn) driverLogoutBtn.addEventListener('click', logout);
             if (refreshBtn) {
                 refreshBtn.addEventListener('click', () => {
-                    if (driversUnsubscribe) listenToDrivers();
+                    if (driversUnsubscribe) {
+                        driversUnsubscribe();
+                        listenToDrivers();
+                    }
                 });
             }
             if (centerBtn) centerBtn.addEventListener('click', centerMap);
@@ -2051,6 +2259,13 @@
                 const permissionGuide = document.getElementById('locationPermissionGuide');
                 if (permissionGuide) permissionGuide.style.display = 'none';
                 
+                // Reset map
+                if (map) {
+                    map.remove();
+                    map = null;
+                    mapInitialized = false;
+                }
+                
             } catch (error) {
                 console.error('Logout error:', error);
             }
@@ -2069,6 +2284,7 @@
 
         // Make functions available globally
         window.confirmDeleteDriver = confirmDeleteDriver;
+        window.focusDriverOnMap = focusDriverOnMap;
     </script>
 </body>
 </html>
