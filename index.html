@@ -870,6 +870,19 @@
                 <p>Share your live location with the owner</p>
             </div>
             
+            <!-- Location Permission Guide -->
+            <div id="locationPermissionGuide" style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin-bottom: 20px; border-radius: 5px; display: none;">
+                <h4 style="color: #856404; margin-bottom: 10px;">
+                    <i class="fas fa-exclamation-triangle"></i> Location Access Required
+                </h4>
+                <p style="color: #856404; margin-bottom: 5px;">Please enable location access:</p>
+                <ul style="color: #856404; margin-left: 20px;">
+                    <li>Click the location/lock icon in your browser's address bar</li>
+                    <li>Select "Allow" for location access</li>
+                    <li>Refresh the page and try again</li>
+                </ul>
+            </div>
+            
             <div class="location-status">
                 <i class="fas fa-map-marker-alt location-not-sharing" id="locationIcon"></i>
                 <h3 id="statusText">Location Sharing is OFF</h3>
@@ -1332,6 +1345,7 @@
 
         function updateDriverList(snapshot) {
             const driverList = document.getElementById('ownerDriverList');
+            if (!driverList) return;
             
             if (snapshot.empty) {
                 driverList.innerHTML = '<p style="text-align: center; color: #5f6368; padding: 2rem;">No drivers added yet.</p>';
@@ -1379,15 +1393,21 @@
                 if (driver.isSharingLocation && driver.location) tracking++;
             });
             
-            document.getElementById('totalDrivers').textContent = total;
-            document.getElementById('onlineDrivers').textContent = online;
-            document.getElementById('trackingDrivers').textContent = tracking;
+            const totalEl = document.getElementById('totalDrivers');
+            const onlineEl = document.getElementById('onlineDrivers');
+            const trackingEl = document.getElementById('trackingDrivers');
+            
+            if (totalEl) totalEl.textContent = total;
+            if (onlineEl) onlineEl.textContent = online;
+            if (trackingEl) trackingEl.textContent = tracking;
         }
 
         function updateMapMarkers(snapshot) {
             if (!map) return;
             
-            Object.values(driverMarkers).forEach(marker => map.removeLayer(marker));
+            Object.values(driverMarkers).forEach(marker => {
+                if (marker) map.removeLayer(marker);
+            });
             driverMarkers = {};
             
             snapshot.forEach(doc => {
@@ -1424,7 +1444,10 @@
             document.getElementById('driverDashboard').style.display = 'none';
             document.getElementById('ownerDashboard').style.display = 'block';
             
-            document.getElementById('welcomeMessage').textContent = `Welcome, ${currentUser.name}`;
+            const welcomeMsg = document.getElementById('welcomeMessage');
+            if (welcomeMsg && currentUser) {
+                welcomeMsg.textContent = `Welcome, ${currentUser.name}`;
+            }
             
             if (!mapInitialized) {
                 initMap();
@@ -1438,22 +1461,35 @@
             document.getElementById('ownerDashboard').style.display = 'none';
             document.getElementById('driverDashboard').style.display = 'block';
             
-            document.getElementById('driverNameDisplay').textContent = currentDriver.name;
-            document.getElementById('driverVehicleDisplay').textContent = currentDriver.vehicle;
-            document.getElementById('driverPhoneDisplay').textContent = currentDriver.phone;
-            document.getElementById('driverStatusDisplay').textContent = currentDriver.isSharingLocation ? 'Sharing Location' : 'Online';
-            document.getElementById('driverStatusDisplay').style.color = currentDriver.isSharingLocation ? '#0f9d58' : '#1a73e8';
+            // Update driver information with null checks
+            const nameEl = document.getElementById('driverNameDisplay');
+            const vehicleEl = document.getElementById('driverVehicleDisplay');
+            const phoneEl = document.getElementById('driverPhoneDisplay');
+            const statusEl = document.getElementById('driverStatusDisplay');
             
-            if (currentDriver.isSharingLocation) {
-                updateSharingStatus(true);
+            if (nameEl) nameEl.textContent = currentDriver.name || '-';
+            if (vehicleEl) vehicleEl.textContent = currentDriver.vehicle || '-';
+            if (phoneEl) phoneEl.textContent = currentDriver.phone || '-';
+            if (statusEl) {
+                statusEl.textContent = currentDriver.isSharingLocation ? 'Sharing Location' : 'Online';
+                statusEl.style.color = currentDriver.isSharingLocation ? '#0f9d58' : '#1a73e8';
             }
+            
+            // Reset sharing status display
+            updateSharingStatus(currentDriver.isSharingLocation || false);
         }
 
         function initMap() {
-            if (typeof L === 'undefined') return;
+            if (typeof L === 'undefined') {
+                console.error('Leaflet not loaded');
+                return;
+            }
             
             const mapElement = document.getElementById('map');
-            if (!mapElement) return;
+            if (!mapElement) {
+                console.error('Map element not found');
+                return;
+            }
             
             map = L.map('map').setView([20.5937, 78.9629], 5);
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -1461,11 +1497,33 @@
             }).addTo(map);
             
             mapInitialized = true;
+            console.log('Map initialized');
         }
 
         // ==================== LOCATION SHARING ====================
+        function checkLocationPermission() {
+            return new Promise((resolve) => {
+                if (!navigator.permissions) {
+                    // If permissions API not supported, try to get location directly
+                    resolve('prompt');
+                    return;
+                }
+                
+                navigator.permissions.query({ name: 'geolocation' })
+                    .then(permissionStatus => {
+                        resolve(permissionStatus.state);
+                    })
+                    .catch(() => {
+                        resolve('prompt');
+                    });
+            });
+        }
+
         async function toggleLocationSharing() {
-            if (!currentDriver) return;
+            if (!currentDriver) {
+                showAlert('Please login as driver first', 'error');
+                return;
+            }
             
             if (currentDriver.isSharingLocation) {
                 await stopSharing();
@@ -1476,41 +1534,67 @@
 
         async function startSharing() {
             if (!navigator.geolocation) {
-                showAlert('Geolocation not supported', 'error');
+                showAlert('Geolocation is not supported by your browser', 'error');
                 return;
             }
             
+            const permissionGuide = document.getElementById('locationPermissionGuide');
+            if (permissionGuide) {
+                permissionGuide.style.display = 'none';
+            }
+            
             const btn = document.getElementById('shareLocationBtn');
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Requesting...';
+            const shareBtnText = document.getElementById('shareBtnText');
+            
+            if (!btn) return;
+            
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Requesting Location...';
             btn.disabled = true;
             
             try {
-                const position = await getCurrentPosition();
+                // Check permission first
+                const permissionState = await checkLocationPermission();
+                console.log('Location permission state:', permissionState);
                 
+                if (permissionState === 'denied') {
+                    if (permissionGuide) {
+                        permissionGuide.style.display = 'block';
+                    }
+                    throw new Error('Location access denied. Please allow location access in your browser settings.');
+                }
+                
+                // Get current position with timeout
+                const position = await getCurrentPositionWithTimeout();
+                console.log('Got location:', position.coords);
+                
+                // Create location data
                 const locationData = {
                     latitude: position.coords.latitude,
                     longitude: position.coords.longitude,
                     accuracy: position.coords.accuracy,
                     speed: position.coords.speed || 0,
-                    heading: position.coords.heading || 0,
+                    heading: position.coords.heading || null,
                     timestamp: firebase.firestore.FieldValue.serverTimestamp()
                 };
                 
+                // Update Firestore
                 await db.collection('drivers').doc(currentDriver.id).update({
                     isSharingLocation: true,
                     isOnline: true,
-                    location: locationData,
-                    lastUpdate: firebase.firestore.FieldValue.serverTimestamp()
+                    lastUpdate: firebase.firestore.FieldValue.serverTimestamp(),
+                    location: locationData
                 });
                 
+                // Start watching position
                 locationWatchId = navigator.geolocation.watchPosition(
                     async (pos) => {
+                        console.log('Location update:', pos.coords);
                         const updateData = {
                             latitude: pos.coords.latitude,
                             longitude: pos.coords.longitude,
                             accuracy: pos.coords.accuracy,
                             speed: pos.coords.speed || 0,
-                            heading: pos.coords.heading || 0,
+                            heading: pos.coords.heading || null,
                             timestamp: firebase.firestore.FieldValue.serverTimestamp()
                         };
                         
@@ -1521,25 +1605,43 @@
                         
                         updateLocationDisplay(updateData);
                     },
-                    (err) => console.error('Watch error:', err),
-                    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0, distanceFilter: 5 }
+                    (error) => {
+                        console.error('Watch error:', error);
+                        handleLocationError(error);
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 10000,
+                        maximumAge: 0,
+                        distanceFilter: 5
+                    }
                 );
                 
+                // Update local state
                 currentDriver.isSharingLocation = true;
+                currentDriver.location = locationData;
+                
+                // Update UI
                 updateSharingStatus(true);
-                showAlert('Location sharing started', 'success');
                 updateLocationDisplay(locationData);
                 
+                showAlert('Location sharing started successfully!', 'success');
+                
             } catch (error) {
-                showAlert('Could not get location: ' + error.message, 'error');
+                console.error('Error starting location sharing:', error);
+                handleLocationError(error);
             } finally {
-                btn.innerHTML = '<i class="fas fa-power-off"></i> <span>STOP Sharing Location</span>';
-                btn.disabled = false;
+                if (btn) {
+                    btn.innerHTML = '<i class="fas fa-power-off"></i> <span id="shareBtnText">STOP Sharing Location</span>';
+                    btn.disabled = false;
+                }
             }
         }
 
         async function stopSharing() {
             const btn = document.getElementById('shareLocationBtn');
+            if (!btn) return;
+            
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Stopping...';
             btn.disabled = true;
             
@@ -1557,24 +1659,66 @@
                 
                 currentDriver.isSharingLocation = false;
                 updateSharingStatus(false);
+                
                 showAlert('Location sharing stopped', 'info');
                 
             } catch (error) {
-                showAlert('Error stopping sharing', 'error');
+                console.error('Error stopping sharing:', error);
+                showAlert('Error stopping sharing: ' + error.message, 'error');
             } finally {
-                btn.innerHTML = '<i class="fas fa-power-off"></i> <span>START Sharing Location</span>';
-                btn.disabled = false;
+                if (btn) {
+                    btn.innerHTML = '<i class="fas fa-power-off"></i> <span id="shareBtnText">START Sharing Location</span>';
+                    btn.disabled = false;
+                }
             }
         }
 
-        function getCurrentPosition() {
+        function getCurrentPositionWithTimeout() {
             return new Promise((resolve, reject) => {
-                navigator.geolocation.getCurrentPosition(resolve, reject, {
-                    enableHighAccuracy: true,
-                    timeout: 10000,
-                    maximumAge: 0
-                });
+                const timeoutId = setTimeout(() => {
+                    reject(new Error('Location request timed out. Please check your GPS signal.'));
+                }, 15000);
+                
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        clearTimeout(timeoutId);
+                        resolve(position);
+                    },
+                    (error) => {
+                        clearTimeout(timeoutId);
+                        reject(error);
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 10000,
+                        maximumAge: 0
+                    }
+                );
             });
+        }
+
+        function handleLocationError(error) {
+            console.error('Location error details:', error);
+            
+            let message = '';
+            const permissionGuide = document.getElementById('locationPermissionGuide');
+            
+            switch(error.code) {
+                case 1: // PERMISSION_DENIED
+                    message = 'Location permission denied. Please enable location access.';
+                    if (permissionGuide) permissionGuide.style.display = 'block';
+                    break;
+                case 2: // POSITION_UNAVAILABLE
+                    message = 'Location unavailable. Please check GPS signal.';
+                    break;
+                case 3: // TIMEOUT
+                    message = 'Location request timed out. Please try again.';
+                    break;
+                default:
+                    message = error.message || 'Could not get location';
+            }
+            
+            showAlert(message, 'error');
         }
 
         function updateSharingStatus(isSharing) {
@@ -1584,25 +1728,59 @@
             const btn = document.getElementById('shareLocationBtn');
             const btnText = document.getElementById('shareBtnText');
             const updates = document.getElementById('locationUpdates');
+            const statusDisplay = document.getElementById('driverStatusDisplay');
             
-            icon.className = isSharing ? 'fas fa-map-marker-alt location-sharing' : 'fas fa-map-marker-alt location-not-sharing';
-            statusText.textContent = isSharing ? 'Location Sharing is ON' : 'Location Sharing is OFF';
-            statusDesc.textContent = isSharing ? 'Owner can see your location' : 'Owner cannot see your location';
-            btn.className = isSharing ? 'btn-share-location btn-share-on' : 'btn-share-location btn-share-off';
-            btnText.textContent = isSharing ? 'STOP Sharing Location' : 'START Sharing Location';
-            updates.style.display = isSharing ? 'block' : 'none';
+            if (icon) {
+                icon.className = isSharing ? 
+                    'fas fa-map-marker-alt location-sharing' : 
+                    'fas fa-map-marker-alt location-not-sharing';
+            }
             
-            document.getElementById('driverStatusDisplay').textContent = isSharing ? 'Sharing Location' : 'Online';
-            document.getElementById('driverStatusDisplay').style.color = isSharing ? '#0f9d58' : '#1a73e8';
+            if (statusText) statusText.textContent = isSharing ? 'Location Sharing is ON' : 'Location Sharing is OFF';
+            if (statusDesc) {
+                statusDesc.textContent = isSharing ? 
+                    'Owner can see your live location' : 
+                    'Owner cannot see your location';
+            }
+            
+            if (btn) {
+                btn.className = isSharing ? 'btn-share-location btn-share-on' : 'btn-share-location btn-share-off';
+            }
+            
+            if (btnText) {
+                btnText.textContent = isSharing ? 'STOP Sharing Location' : 'START Sharing Location';
+            }
+            
+            if (updates) {
+                updates.style.display = isSharing ? 'block' : 'none';
+            }
+            
+            if (statusDisplay) {
+                statusDisplay.textContent = isSharing ? 'Sharing Location' : 'Online';
+                statusDisplay.style.color = isSharing ? '#0f9d58' : '#1a73e8';
+            }
         }
 
         function updateLocationDisplay(loc) {
-            document.getElementById('currentLat').textContent = loc.latitude.toFixed(6);
-            document.getElementById('currentLng').textContent = loc.longitude.toFixed(6);
-            document.getElementById('currentAccuracy').textContent = Math.round(loc.accuracy) + ' meters';
+            if (!loc) return;
             
-            const speedKmh = (loc.speed * 3.6).toFixed(1);
-            document.getElementById('currentSpeed').textContent = loc.speed > 0 ? speedKmh + ' km/h' : '0 km/h';
+            const latEl = document.getElementById('currentLat');
+            const lngEl = document.getElementById('currentLng');
+            const accEl = document.getElementById('currentAccuracy');
+            const speedEl = document.getElementById('currentSpeed');
+            
+            if (latEl) latEl.textContent = loc.latitude ? loc.latitude.toFixed(6) : '-';
+            if (lngEl) lngEl.textContent = loc.longitude ? loc.longitude.toFixed(6) : '-';
+            if (accEl) accEl.textContent = loc.accuracy ? Math.round(loc.accuracy) + ' meters' : '-';
+            
+            if (speedEl) {
+                if (loc.speed) {
+                    const speedKmh = (loc.speed * 3.6).toFixed(1);
+                    speedEl.textContent = speedKmh + ' km/h';
+                } else {
+                    speedEl.textContent = '0 km/h';
+                }
+            }
         }
 
         // ==================== HELPER FUNCTIONS ====================
@@ -1621,115 +1799,190 @@
                 case 'auth/network-request-failed':
                     return 'Network error';
                 default:
-                    return error.message;
+                    return error.message || 'An error occurred';
             }
         }
 
         function showLoginError(message) {
             const errorDiv = document.getElementById('loginError');
-            errorDiv.innerHTML = message;
-            errorDiv.style.display = 'block';
-            setTimeout(() => errorDiv.style.display = 'none', 5000);
+            if (errorDiv) {
+                errorDiv.innerHTML = message;
+                errorDiv.style.display = 'block';
+                setTimeout(() => errorDiv.style.display = 'none', 5000);
+            } else {
+                showAlert(message, 'error');
+            }
         }
 
         function showDriverError(message) {
             const errorDiv = document.getElementById('addDriverError');
-            errorDiv.innerHTML = message;
-            errorDiv.style.display = 'block';
-            document.getElementById('addDriverSuccess').style.display = 'none';
+            const successDiv = document.getElementById('addDriverSuccess');
+            
+            if (errorDiv) {
+                errorDiv.innerHTML = message;
+                errorDiv.style.display = 'block';
+            }
+            if (successDiv) successDiv.style.display = 'none';
         }
 
         function showDriverSuccess(message) {
             const successDiv = document.getElementById('addDriverSuccess');
-            successDiv.innerHTML = message;
-            successDiv.style.display = 'block';
-            document.getElementById('addDriverError').style.display = 'none';
+            const errorDiv = document.getElementById('addDriverError');
+            
+            if (successDiv) {
+                successDiv.innerHTML = message;
+                successDiv.style.display = 'block';
+            }
+            if (errorDiv) errorDiv.style.display = 'none';
         }
 
         function showOwnerError(message) {
             const errorDiv = document.getElementById('addOwnerError');
-            errorDiv.innerHTML = message;
-            errorDiv.style.display = 'block';
-            document.getElementById('addOwnerSuccess').style.display = 'none';
+            const successDiv = document.getElementById('addOwnerSuccess');
+            
+            if (errorDiv) {
+                errorDiv.innerHTML = message;
+                errorDiv.style.display = 'block';
+            }
+            if (successDiv) successDiv.style.display = 'none';
         }
 
         function showOwnerSuccess(message) {
             const successDiv = document.getElementById('addOwnerSuccess');
-            successDiv.innerHTML = message;
-            successDiv.style.display = 'block';
-            document.getElementById('addOwnerError').style.display = 'none';
+            const errorDiv = document.getElementById('addOwnerError');
+            
+            if (successDiv) {
+                successDiv.innerHTML = message;
+                successDiv.style.display = 'block';
+            }
+            if (errorDiv) errorDiv.style.display = 'none';
         }
 
-        function showAlert(message, type) {
-            const alert = document.createElement('div');
-            alert.className = `alert alert-${type}`;
-            alert.innerHTML = `<i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i> ${message}`;
-            document.body.appendChild(alert);
-            setTimeout(() => alert.remove(), 3000);
+        function showAlert(message, type = 'error') {
+            // Remove existing alerts
+            const existingAlerts = document.querySelectorAll('.alert');
+            existingAlerts.forEach(alert => alert.remove());
+            
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type}`;
+            
+            let icon = 'info-circle';
+            if (type === 'success') icon = 'check-circle';
+            if (type === 'error') icon = 'exclamation-circle';
+            
+            alertDiv.innerHTML = `<i class="fas fa-${icon}"></i> ${message}`;
+            document.body.appendChild(alertDiv);
+            
+            setTimeout(() => {
+                if (alertDiv.parentNode) {
+                    alertDiv.style.opacity = '0';
+                    alertDiv.style.transition = 'opacity 0.5s';
+                    setTimeout(() => {
+                        if (alertDiv.parentNode) alertDiv.remove();
+                    }, 500);
+                }
+            }, 5000);
         }
 
         // ==================== MODAL FUNCTIONS ====================
         function setupModals() {
-            document.getElementById('addDriverBtn').addEventListener('click', openAddDriverModal);
-            document.getElementById('closeDriverModalBtn').addEventListener('click', closeAddDriverModal);
-            document.getElementById('submitDriverBtn').addEventListener('click', addNewDriver);
+            const addDriverBtn = document.getElementById('addDriverBtn');
+            const closeDriverBtn = document.getElementById('closeDriverModalBtn');
+            const submitDriverBtn = document.getElementById('submitDriverBtn');
+            const addOwnerBtn = document.getElementById('addOwnerBtn');
+            const closeOwnerBtn = document.getElementById('closeOwnerModalBtn');
+            const submitOwnerBtn = document.getElementById('submitOwnerBtn');
+            const cancelDeleteBtn = document.getElementById('cancelDeleteBtn');
+            const confirmDeleteBtn = document.getElementById('confirmDeleteBtn');
             
-            document.getElementById('addOwnerBtn').addEventListener('click', openAddOwnerModal);
-            document.getElementById('closeOwnerModalBtn').addEventListener('click', closeAddOwnerModal);
-            document.getElementById('submitOwnerBtn').addEventListener('click', addNewOwner);
+            if (addDriverBtn) addDriverBtn.addEventListener('click', openAddDriverModal);
+            if (closeDriverBtn) closeDriverBtn.addEventListener('click', closeAddDriverModal);
+            if (submitDriverBtn) submitDriverBtn.addEventListener('click', addNewDriver);
             
-            document.getElementById('cancelDeleteBtn').addEventListener('click', closeDeleteModal);
-            document.getElementById('confirmDeleteBtn').addEventListener('click', deleteDriver);
+            if (addOwnerBtn) addOwnerBtn.addEventListener('click', openAddOwnerModal);
+            if (closeOwnerBtn) closeOwnerBtn.addEventListener('click', closeAddOwnerModal);
+            if (submitOwnerBtn) submitOwnerBtn.addEventListener('click', addNewOwner);
+            
+            if (cancelDeleteBtn) cancelDeleteBtn.addEventListener('click', closeDeleteModal);
+            if (confirmDeleteBtn) confirmDeleteBtn.addEventListener('click', deleteDriver);
         }
 
         function openAddDriverModal() {
-            document.getElementById('addDriverModal').style.display = 'flex';
+            const modal = document.getElementById('addDriverModal');
+            if (modal) modal.style.display = 'flex';
         }
 
         function closeAddDriverModal() {
-            document.getElementById('addDriverModal').style.display = 'none';
-            document.getElementById('addDriverError').style.display = 'none';
-            document.getElementById('addDriverSuccess').style.display = 'none';
+            const modal = document.getElementById('addDriverModal');
+            if (modal) modal.style.display = 'none';
+            
+            const errorDiv = document.getElementById('addDriverError');
+            const successDiv = document.getElementById('addDriverSuccess');
+            if (errorDiv) errorDiv.style.display = 'none';
+            if (successDiv) successDiv.style.display = 'none';
         }
 
         function openAddOwnerModal() {
-            document.getElementById('addOwnerModal').style.display = 'flex';
+            const modal = document.getElementById('addOwnerModal');
+            if (modal) modal.style.display = 'flex';
         }
 
         function closeAddOwnerModal() {
-            document.getElementById('addOwnerModal').style.display = 'none';
-            document.getElementById('addOwnerError').style.display = 'none';
-            document.getElementById('addOwnerSuccess').style.display = 'none';
+            const modal = document.getElementById('addOwnerModal');
+            if (modal) modal.style.display = 'none';
+            
+            const errorDiv = document.getElementById('addOwnerError');
+            const successDiv = document.getElementById('addOwnerSuccess');
+            if (errorDiv) errorDiv.style.display = 'none';
+            if (successDiv) successDiv.style.display = 'none';
         }
 
         function closeDeleteModal() {
-            document.getElementById('deleteConfirmModal').style.display = 'none';
+            const modal = document.getElementById('deleteConfirmModal');
+            if (modal) modal.style.display = 'none';
             driverToDelete = null;
         }
 
         // ==================== DASHBOARD BUTTONS ====================
         function setupDashboardButtons() {
-            document.getElementById('logoutBtn').addEventListener('click', logout);
-            document.getElementById('driverLogoutBtn').addEventListener('click', logout);
-            document.getElementById('refreshBtn').addEventListener('click', () => {
-                if (driversUnsubscribe) listenToDrivers();
-            });
-            document.getElementById('centerBtn').addEventListener('click', centerMap);
-            document.getElementById('viewAllBtn').addEventListener('click', viewAllDrivers);
-            document.getElementById('shareLocationBtn').addEventListener('click', toggleLocationSharing);
+            const logoutBtn = document.getElementById('logoutBtn');
+            const driverLogoutBtn = document.getElementById('driverLogoutBtn');
+            const refreshBtn = document.getElementById('refreshBtn');
+            const centerBtn = document.getElementById('centerBtn');
+            const viewAllBtn = document.getElementById('viewAllBtn');
+            const shareLocationBtn = document.getElementById('shareLocationBtn');
+            
+            if (logoutBtn) logoutBtn.addEventListener('click', logout);
+            if (driverLogoutBtn) driverLogoutBtn.addEventListener('click', logout);
+            if (refreshBtn) {
+                refreshBtn.addEventListener('click', () => {
+                    if (driversUnsubscribe) listenToDrivers();
+                });
+            }
+            if (centerBtn) centerBtn.addEventListener('click', centerMap);
+            if (viewAllBtn) viewAllBtn.addEventListener('click', viewAllDrivers);
+            if (shareLocationBtn) shareLocationBtn.addEventListener('click', toggleLocationSharing);
         }
 
         function centerMap() {
-            if (map && navigator.geolocation) {
+            if (!map) return;
+            
+            if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(
-                    pos => map.setView([pos.coords.latitude, pos.coords.longitude], 13),
-                    () => showAlert('Could not get location', 'error')
+                    (pos) => {
+                        map.setView([pos.coords.latitude, pos.coords.longitude], 13);
+                    },
+                    () => {
+                        showAlert('Could not get your location', 'error');
+                    }
                 );
             }
         }
 
         function viewAllDrivers() {
-            const markers = Object.values(driverMarkers);
+            if (!map) return;
+            
+            const markers = Object.values(driverMarkers).filter(m => m);
             if (markers.length === 0) {
                 showAlert('No drivers sharing location', 'info');
                 return;
@@ -1763,6 +2016,11 @@
                     driversUnsubscribe = null;
                 }
                 
+                if (driverLocationUpdates) {
+                    driverLocationUpdates();
+                    driverLocationUpdates = null;
+                }
+                
                 if (auth && currentUser) {
                     await auth.signOut();
                 }
@@ -1770,20 +2028,35 @@
                 currentUser = null;
                 currentDriver = null;
                 
-                document.getElementById('ownerDashboard').style.display = 'none';
-                document.getElementById('driverDashboard').style.display = 'none';
-                document.getElementById('loginContainer').style.display = 'flex';
+                const ownerDash = document.getElementById('ownerDashboard');
+                const driverDash = document.getElementById('driverDashboard');
+                const loginContainer = document.getElementById('loginContainer');
                 
-                document.getElementById('ownerEmail').value = '';
-                document.getElementById('ownerPassword').value = '';
-                document.getElementById('driverName').value = '';
-                document.getElementById('driverPin').value = '';
+                if (ownerDash) ownerDash.style.display = 'none';
+                if (driverDash) driverDash.style.display = 'none';
+                if (loginContainer) loginContainer.style.display = 'flex';
+                
+                // Clear forms
+                const ownerEmail = document.getElementById('ownerEmail');
+                const ownerPass = document.getElementById('ownerPassword');
+                const driverName = document.getElementById('driverName');
+                const driverPin = document.getElementById('driverPin');
+                
+                if (ownerEmail) ownerEmail.value = '';
+                if (ownerPass) ownerPass.value = '';
+                if (driverName) driverName.value = '';
+                if (driverPin) driverPin.value = '';
+                
+                // Hide permission guide
+                const permissionGuide = document.getElementById('locationPermissionGuide');
+                if (permissionGuide) permissionGuide.style.display = 'none';
                 
             } catch (error) {
                 console.error('Logout error:', error);
             }
         }
 
+        // Close modals on outside click
         window.onclick = function(event) {
             const driverModal = document.getElementById('addDriverModal');
             const ownerModal = document.getElementById('addOwnerModal');
