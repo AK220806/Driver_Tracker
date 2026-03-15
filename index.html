@@ -7,6 +7,11 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
+    <!-- Firebase SDK (Compat Version) -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+    
     <!-- PWA Meta Tags for Mobile -->
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -155,19 +160,6 @@
             display: none;
         }
 
-        .register-link {
-            text-align: center;
-            margin-top: 1rem;
-            font-size: 0.9rem;
-        }
-
-        .register-link a {
-            color: #1a73e8;
-            text-decoration: none;
-            font-weight: 500;
-            cursor: pointer;
-        }
-
         /* Dashboard Styles */
         .dashboard-container {
             display: none;
@@ -262,18 +254,13 @@
             transition: all 0.3s;
         }
 
-        .btn-add {
+        .btn-add-driver {
             background: #0f9d58;
             color: white;
         }
 
         .btn-add-owner {
             background: #1a73e8;
-            color: white;
-        }
-
-        .btn-delete {
-            background: #db4437;
             color: white;
         }
 
@@ -334,10 +321,6 @@
 
         .btn-icon.delete:hover {
             color: #db4437;
-        }
-
-        .btn-icon.edit:hover {
-            color: #1a73e8;
         }
 
         .driver-status {
@@ -421,11 +404,6 @@
         .btn-secondary {
             background: #f1f3f4;
             color: #1a73e8;
-        }
-
-        .btn-danger {
-            background: #db4437;
-            color: white;
         }
 
         /* Modal */
@@ -592,7 +570,6 @@
             border-radius: 8px;
             text-align: center;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            border: 1px solid #e8f0fe;
         }
 
         .stat-value {
@@ -828,7 +805,7 @@
                 <div class="sidebar-section">
                     <h3>Management</h3>
                     <div class="action-buttons">
-                        <button class="btn-action btn-add" id="addDriverBtn">
+                        <button class="btn-action btn-add-driver" id="addDriverBtn">
                             <i class="fas fa-user-plus"></i> Add Driver
                         </button>
                         <button class="btn-action btn-add-owner" id="addOwnerBtn">
@@ -1022,26 +999,50 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <script>
-        // API Base URL - Update this to your server URL
-        const API_BASE = 'http://127.0.0.1/travel_tracker/api/';
-        
-        // Global variables
+        // ==================== FIREBASE CONFIGURATION ====================
+        const firebaseConfig = {
+            apiKey: "AIzaSyACs_dGBcZG_ZxvB7kD0_Vj21GKy7LHV4c",
+            authDomain: "traveltracker-e8182.firebaseapp.com",
+            projectId: "traveltracker-e8182",
+            storageBucket: "traveltracker-e8182.firebasestorage.app",
+            messagingSenderId: "1092635979078",
+            appId: "1:1092635979078:web:c72c065436e613566c0947",
+            measurementId: "G-1Q154Q396V"
+        };
+
+        // Firebase variables
+        let db = null;
+        let auth = null;
         let currentUser = null;
         let currentDriver = null;
         let map = null;
         let driverMarkers = {};
-        let mapInitialized = false;
+        let driversUnsubscribe = null;
         let locationWatchId = null;
-        let pollInterval = null;
+        let driverLocationUpdates = null;
+        let mapInitialized = false;
         let driverToDelete = null;
-        
-        // Initialize on page load
+
+        // ==================== INITIALIZATION ====================
         document.addEventListener('DOMContentLoaded', function() {
+            console.log('Travel Tracker Initializing...');
+            
+            // Initialize Firebase
+            try {
+                firebase.initializeApp(firebaseConfig);
+                db = firebase.firestore();
+                auth = firebase.auth();
+                console.log('Firebase initialized successfully');
+            } catch (error) {
+                console.error('Firebase initialization error:', error);
+                showAlert('Firebase initialization failed: ' + error.message, 'error');
+            }
+            
             setupLoginPage();
             setupDashboardButtons();
             setupModals();
         });
-        
+
         // ==================== LOGIN PAGE SETUP ====================
         function setupLoginPage() {
             const ownerBtn = document.getElementById('ownerBtn');
@@ -1066,9 +1067,14 @@
             document.getElementById('ownerLoginBtn').addEventListener('click', loginAsOwner);
             document.getElementById('driverLoginBtn').addEventListener('click', loginAsDriver);
         }
-        
+
         // ==================== AUTH FUNCTIONS ====================
         async function loginAsOwner() {
+            if (!auth || !db) {
+                showLoginError('Firebase not initialized. Please refresh the page.');
+                return;
+            }
+            
             const email = document.getElementById('ownerEmail').value.trim();
             const password = document.getElementById('ownerPassword').value.trim();
             
@@ -1082,39 +1088,44 @@
             btn.disabled = true;
             
             try {
-                const response = await fetch(API_BASE + 'login_owner.php', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, password })
-                });
+                const userCredential = await auth.signInWithEmailAndPassword(email, password);
+                const ownerDoc = await db.collection('owners').doc(userCredential.user.uid).get();
                 
-                const data = await response.json();
-                
-                if (data.success) {
-                    currentUser = data.user;
+                if (ownerDoc.exists) {
+                    currentUser = {
+                        uid: userCredential.user.uid,
+                        email: email,
+                        name: ownerDoc.data().name,
+                        type: 'owner'
+                    };
                     showOwnerDashboard();
                 } else {
-                    showLoginError(data.message);
+                    showLoginError('Owner account not found');
                 }
             } catch (error) {
-                showLoginError('Connection error. Please try again.');
+                showLoginError(getFirebaseErrorMessage(error));
             } finally {
                 btn.innerHTML = 'Login as Owner';
                 btn.disabled = false;
             }
         }
-        
+
         async function loginAsDriver() {
-            const name = document.getElementById('driverName').value.trim();
+            if (!db) {
+                showLoginError('Firebase not initialized. Please refresh the page.');
+                return;
+            }
+            
+            const driverName = document.getElementById('driverName').value.trim();
             const pin = document.getElementById('driverPin').value.trim();
             
-            if (!name || !pin) {
-                showLoginError('Please enter name and PIN');
+            if (!driverName || !pin) {
+                showLoginError('Please enter Driver Name and PIN');
                 return;
             }
             
             if (pin.length !== 4 || isNaN(pin)) {
-                showLoginError('PIN must be 4 digits');
+                showLoginError('PIN must be a 4-digit number');
                 return;
             }
             
@@ -1123,30 +1134,48 @@
             btn.disabled = true;
             
             try {
-                const response = await fetch(API_BASE + 'login_driver.php', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name, pin })
+                const driversSnapshot = await db.collection('drivers').get();
+                let foundDriver = null;
+                let foundDriverId = null;
+                
+                driversSnapshot.forEach(doc => {
+                    const driver = doc.data();
+                    if (driver.pin === pin && driver.name.toLowerCase() === driverName.toLowerCase()) {
+                        foundDriver = driver;
+                        foundDriverId = doc.id;
+                    }
                 });
                 
-                const data = await response.json();
-                
-                if (data.success) {
-                    currentDriver = data.driver;
+                if (foundDriver) {
+                    currentDriver = {
+                        id: foundDriverId,
+                        ...foundDriver
+                    };
+                    
+                    await db.collection('drivers').doc(foundDriverId).update({
+                        isOnline: true,
+                        lastLogin: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                    
                     showDriverDashboard();
                 } else {
-                    showLoginError(data.message);
+                    showLoginError('Invalid Driver Name or PIN');
                 }
             } catch (error) {
-                showLoginError('Connection error. Please try again.');
+                showLoginError(getFirebaseErrorMessage(error));
             } finally {
                 btn.innerHTML = 'Login as Driver';
                 btn.disabled = false;
             }
         }
-        
-        // ==================== OWNER MANAGEMENT ====================
+
+        // ==================== ADD OWNER FUNCTION ====================
         async function addNewOwner() {
+            if (!auth || !db || !currentUser) {
+                showOwnerError('Please login first');
+                return;
+            }
+            
             const name = document.getElementById('newOwnerName').value.trim();
             const email = document.getElementById('newOwnerEmail').value.trim();
             const password = document.getElementById('newOwnerPassword').value.trim();
@@ -1167,35 +1196,38 @@
             btn.disabled = true;
             
             try {
-                const response = await fetch(API_BASE + 'add_owner.php', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name, email, password, phone })
+                const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+                
+                await db.collection('owners').doc(userCredential.user.uid).set({
+                    name: name,
+                    email: email,
+                    phone: phone,
+                    createdBy: currentUser.uid,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
                 });
                 
-                const data = await response.json();
+                showOwnerSuccess('New owner added successfully!');
+                document.getElementById('newOwnerName').value = '';
+                document.getElementById('newOwnerEmail').value = '';
+                document.getElementById('newOwnerPassword').value = '';
+                document.getElementById('newOwnerPhone').value = '';
                 
-                if (data.success) {
-                    showOwnerSuccess('New owner added successfully!');
-                    document.getElementById('newOwnerName').value = '';
-                    document.getElementById('newOwnerEmail').value = '';
-                    document.getElementById('newOwnerPassword').value = '';
-                    document.getElementById('newOwnerPhone').value = '';
-                    
-                    setTimeout(() => closeAddOwnerModal(), 3000);
-                } else {
-                    showOwnerError(data.message);
-                }
+                setTimeout(() => closeAddOwnerModal(), 3000);
             } catch (error) {
-                showOwnerError('Connection error');
+                showOwnerError(getFirebaseErrorMessage(error));
             } finally {
                 btn.innerHTML = '<i class="fas fa-save"></i> Add Owner';
                 btn.disabled = false;
             }
         }
-        
-        // ==================== DRIVER MANAGEMENT ====================
+
+        // ==================== ADD DRIVER FUNCTION ====================
         async function addNewDriver() {
+            if (!db || !currentUser) {
+                showDriverError('Please login first');
+                return;
+            }
+            
             const name = document.getElementById('newDriverName').value.trim();
             const phone = document.getElementById('newDriverPhone').value.trim();
             const vehicle = document.getElementById('newDriverVehicle').value.trim();
@@ -1207,7 +1239,7 @@
             }
             
             if (pin.length !== 4 || isNaN(pin)) {
-                showDriverError('PIN must be 4 digits');
+                showDriverError('PIN must be a 4-digit number');
                 return;
             }
             
@@ -1216,145 +1248,176 @@
             btn.disabled = true;
             
             try {
-                const response = await fetch(API_BASE + 'add_driver.php', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name, phone, vehicle, pin })
+                const driverId = 'DRV' + Date.now().toString().substr(-6) + Math.floor(Math.random() * 100);
+                
+                await db.collection('drivers').doc(driverId).set({
+                    name: name,
+                    phone: phone,
+                    vehicle: vehicle,
+                    pin: pin,
+                    ownerId: currentUser.uid,
+                    ownerName: currentUser.name,
+                    isSharingLocation: false,
+                    location: null,
+                    lastUpdate: null,
+                    isOnline: false,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
                 });
                 
-                const data = await response.json();
+                showDriverSuccess(`Driver added successfully!<br>PIN: ${pin}`);
+                document.getElementById('newDriverName').value = '';
+                document.getElementById('newDriverPhone').value = '';
+                document.getElementById('newDriverVehicle').value = '';
+                document.getElementById('newDriverPin').value = '';
                 
-                if (data.success) {
-                    showDriverSuccess(`Driver added!<br>Name: ${name}<br>PIN: ${pin}`);
-                    document.getElementById('newDriverName').value = '';
-                    document.getElementById('newDriverPhone').value = '';
-                    document.getElementById('newDriverVehicle').value = '';
-                    document.getElementById('newDriverPin').value = '';
-                    
-                    setTimeout(() => closeAddDriverModal(), 3000);
-                    loadDrivers(); // Refresh driver list
-                } else {
-                    showDriverError(data.message);
-                }
+                setTimeout(() => closeAddDriverModal(), 3000);
             } catch (error) {
-                showDriverError('Connection error');
+                showDriverError('Failed to add driver: ' + error.message);
             } finally {
                 btn.innerHTML = '<i class="fas fa-save"></i> Add Driver';
                 btn.disabled = false;
             }
         }
-        
+
+        // ==================== DELETE DRIVER FUNCTION ====================
         function confirmDeleteDriver(driverId, driverName) {
             driverToDelete = driverId;
             document.getElementById('deleteConfirmMessage').textContent = 
                 `Are you sure you want to delete ${driverName}? This action cannot be undone.`;
             document.getElementById('deleteConfirmModal').style.display = 'flex';
         }
-        
+
         async function deleteDriver() {
-            if (!driverToDelete) return;
+            if (!driverToDelete || !db) return;
             
             try {
-                const response = await fetch(API_BASE + 'delete_driver.php', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ driver_id: driverToDelete })
-                });
+                await db.collection('drivers').doc(driverToDelete).delete();
+                showAlert('Driver deleted successfully', 'success');
                 
-                const data = await response.json();
-                
-                if (data.success) {
-                    showAlert('Driver deleted successfully', 'success');
-                    loadDrivers(); // Refresh driver list
-                    
-                    // Remove marker from map
-                    if (driverMarkers[driverToDelete]) {
-                        map.removeLayer(driverMarkers[driverToDelete]);
-                        delete driverMarkers[driverToDelete];
-                    }
-                } else {
-                    showAlert(data.message, 'error');
+                // Remove marker from map
+                if (driverMarkers[driverToDelete]) {
+                    map.removeLayer(driverMarkers[driverToDelete]);
+                    delete driverMarkers[driverToDelete];
                 }
             } catch (error) {
-                showAlert('Error deleting driver', 'error');
+                showAlert('Error deleting driver: ' + error.message, 'error');
             } finally {
                 closeDeleteModal();
             }
         }
-        
-        async function loadDrivers() {
-            try {
-                const response = await fetch(API_BASE + 'get_drivers.php');
-                const data = await response.json();
-                
-                if (data.success) {
-                    updateDriverList(data.drivers);
-                    updateStats(data.drivers);
-                    updateMapMarkers(data.drivers);
-                    updateLastUpdated();
-                }
-            } catch (error) {
-                console.error('Error loading drivers:', error);
-            }
-        }
-        
-        function updateDriverList(drivers) {
-            const list = document.getElementById('ownerDriverList');
+
+        // ==================== REAL-TIME DRIVER LISTENER ====================
+        function listenToDrivers() {
+            if (!db || !currentUser) return;
             
-            if (!drivers || drivers.length === 0) {
-                list.innerHTML = '<p style="text-align: center; color: #5f6368; padding: 2rem;">No drivers added yet.</p>';
+            if (driversUnsubscribe) {
+                driversUnsubscribe();
+            }
+            
+            driversUnsubscribe = db.collection('drivers')
+                .where('ownerId', '==', currentUser.uid)
+                .onSnapshot((snapshot) => {
+                    updateDriverList(snapshot);
+                    updateStats(snapshot);
+                    updateMapMarkers(snapshot);
+                    
+                    const lastUpdated = document.getElementById('lastUpdated');
+                    if (lastUpdated) {
+                        lastUpdated.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+                    }
+                }, (error) => {
+                    console.error('Error listening to drivers:', error);
+                });
+        }
+
+        function updateDriverList(snapshot) {
+            const driverList = document.getElementById('ownerDriverList');
+            
+            if (snapshot.empty) {
+                driverList.innerHTML = '<p style="text-align: center; color: #5f6368; padding: 2rem;">No drivers added yet.</p>';
                 return;
             }
             
             let html = '';
-            drivers.forEach(driver => {
-                const hasLocation = driver.location && driver.location.latitude;
+            snapshot.forEach(doc => {
+                const driver = doc.data();
+                const driverId = doc.id;
+                
                 html += `
-                    <div class="driver-item">
+                    <div class="driver-item ${driver.isSharingLocation ? 'active' : ''}">
                         <div class="driver-header">
                             <span class="driver-name">${driver.name}</span>
                             <div class="driver-actions">
-                                <button class="btn-icon delete" onclick="confirmDeleteDriver('${driver.id}', '${driver.name}')" title="Delete Driver">
+                                <button class="btn-icon delete" onclick="confirmDeleteDriver('${driverId}', '${driver.name}')" title="Delete Driver">
                                     <i class="fas fa-trash"></i>
                                 </button>
                             </div>
                         </div>
                         <div class="driver-status">
-                            <span class="status-dot ${driver.is_sharing_location ? 'status-online' : 'status-offline'}"></span>
-                            <span>${driver.is_sharing_location ? 'Sharing' : 'Not Sharing'}</span>
-                            ${driver.is_sharing_location ? '<span class="realtime-badge">LIVE</span>' : ''}
+                            <span class="status-dot ${driver.isSharingLocation ? 'status-online' : 'status-offline'}"></span>
+                            <span>${driver.isSharingLocation ? 'Sharing' : 'Not Sharing'}</span>
+                            ${driver.isSharingLocation ? '<span class="realtime-badge">LIVE</span>' : ''}
                         </div>
                         <div><i class="fas fa-car"></i> ${driver.vehicle}</div>
                         <div><i class="fas fa-phone"></i> ${driver.phone}</div>
-                        ${hasLocation ? `
-                            <div style="font-size: 0.75rem; color: #0f9d58; margin-top: 0.5rem;">
-                                <i class="fas fa-map-marker-alt"></i> 
-                                ${driver.location.latitude.toFixed(4)}, ${driver.location.longitude.toFixed(4)}
-                            </div>
-                        ` : ''}
                     </div>
                 `;
             });
             
-            list.innerHTML = html;
+            driverList.innerHTML = html;
         }
-        
-        function updateStats(drivers) {
-            const total = drivers.length;
-            const online = drivers.filter(d => d.is_online).length;
-            const tracking = drivers.filter(d => d.is_sharing_location && d.location).length;
+
+        function updateStats(snapshot) {
+            let total = 0;
+            let online = 0;
+            let tracking = 0;
+            
+            snapshot.forEach(doc => {
+                const driver = doc.data();
+                total++;
+                if (driver.isOnline) online++;
+                if (driver.isSharingLocation && driver.location) tracking++;
+            });
             
             document.getElementById('totalDrivers').textContent = total;
             document.getElementById('onlineDrivers').textContent = online;
             document.getElementById('trackingDrivers').textContent = tracking;
         }
-        
-        function updateLastUpdated() {
-            const now = new Date();
-            const timeString = now.toLocaleTimeString();
-            document.getElementById('lastUpdated').textContent = `Last updated: ${timeString}`;
+
+        function updateMapMarkers(snapshot) {
+            if (!map) return;
+            
+            Object.values(driverMarkers).forEach(marker => map.removeLayer(marker));
+            driverMarkers = {};
+            
+            snapshot.forEach(doc => {
+                const driver = doc.data();
+                const driverId = doc.id;
+                
+                if (driver.isSharingLocation && driver.location) {
+                    const { latitude, longitude } = driver.location;
+                    
+                    const marker = L.marker([latitude, longitude], {
+                        icon: L.divIcon({
+                            html: `<div style="background: #0f9d58; color: white; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 3px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.3);">
+                                    <i class="fas fa-car"></i>
+                                  </div>`,
+                            iconSize: [40, 40],
+                            iconAnchor: [20, 40]
+                        })
+                    }).addTo(map);
+                    
+                    marker.bindPopup(`
+                        <b>${driver.name}</b><br>
+                        <i class="fas fa-car"></i> ${driver.vehicle}<br>
+                        <i class="fas fa-phone"></i> ${driver.phone}
+                    `);
+                    
+                    driverMarkers[driverId] = marker;
+                }
+            });
         }
-        
+
         // ==================== DASHBOARD FUNCTIONS ====================
         function showOwnerDashboard() {
             document.getElementById('loginContainer').style.display = 'none';
@@ -1367,10 +1430,9 @@
                 initMap();
             }
             
-            loadDrivers();
-            startPolling();
+            listenToDrivers();
         }
-        
+
         function showDriverDashboard() {
             document.getElementById('loginContainer').style.display = 'none';
             document.getElementById('ownerDashboard').style.display = 'none';
@@ -1379,25 +1441,39 @@
             document.getElementById('driverNameDisplay').textContent = currentDriver.name;
             document.getElementById('driverVehicleDisplay').textContent = currentDriver.vehicle;
             document.getElementById('driverPhoneDisplay').textContent = currentDriver.phone;
-            document.getElementById('driverStatusDisplay').textContent = currentDriver.is_online ? 'Online' : 'Offline';
-            document.getElementById('driverStatusDisplay').style.color = currentDriver.is_online ? '#0f9d58' : '#db4437';
+            document.getElementById('driverStatusDisplay').textContent = currentDriver.isSharingLocation ? 'Sharing Location' : 'Online';
+            document.getElementById('driverStatusDisplay').style.color = currentDriver.isSharingLocation ? '#0f9d58' : '#1a73e8';
             
-            if (currentDriver.is_sharing_location) {
+            if (currentDriver.isSharingLocation) {
                 updateSharingStatus(true);
             }
         }
-        
+
+        function initMap() {
+            if (typeof L === 'undefined') return;
+            
+            const mapElement = document.getElementById('map');
+            if (!mapElement) return;
+            
+            map = L.map('map').setView([20.5937, 78.9629], 5);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap'
+            }).addTo(map);
+            
+            mapInitialized = true;
+        }
+
         // ==================== LOCATION SHARING ====================
         async function toggleLocationSharing() {
             if (!currentDriver) return;
             
-            if (currentDriver.is_sharing_location) {
+            if (currentDriver.isSharingLocation) {
                 await stopSharing();
             } else {
                 await startSharing();
             }
         }
-        
+
         async function startSharing() {
             if (!navigator.geolocation) {
                 showAlert('Geolocation not supported', 'error');
@@ -1411,19 +1487,48 @@
             try {
                 const position = await getCurrentPosition();
                 
-                // Send initial location
-                await sendLocation(position);
+                const locationData = {
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude,
+                    accuracy: position.coords.accuracy,
+                    speed: position.coords.speed || 0,
+                    heading: position.coords.heading || 0,
+                    timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                };
                 
-                // Start watching position
+                await db.collection('drivers').doc(currentDriver.id).update({
+                    isSharingLocation: true,
+                    isOnline: true,
+                    location: locationData,
+                    lastUpdate: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                
                 locationWatchId = navigator.geolocation.watchPosition(
-                    async (pos) => await sendLocation(pos),
+                    async (pos) => {
+                        const updateData = {
+                            latitude: pos.coords.latitude,
+                            longitude: pos.coords.longitude,
+                            accuracy: pos.coords.accuracy,
+                            speed: pos.coords.speed || 0,
+                            heading: pos.coords.heading || 0,
+                            timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                        };
+                        
+                        await db.collection('drivers').doc(currentDriver.id).update({
+                            location: updateData,
+                            lastUpdate: firebase.firestore.FieldValue.serverTimestamp()
+                        });
+                        
+                        updateLocationDisplay(updateData);
+                    },
                     (err) => console.error('Watch error:', err),
                     { enableHighAccuracy: true, timeout: 10000, maximumAge: 0, distanceFilter: 5 }
                 );
                 
-                currentDriver.is_sharing_location = true;
+                currentDriver.isSharingLocation = true;
                 updateSharingStatus(true);
                 showAlert('Location sharing started', 'success');
+                updateLocationDisplay(locationData);
                 
             } catch (error) {
                 showAlert('Could not get location: ' + error.message, 'error');
@@ -1432,7 +1537,7 @@
                 btn.disabled = false;
             }
         }
-        
+
         async function stopSharing() {
             const btn = document.getElementById('shareLocationBtn');
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Stopping...';
@@ -1444,12 +1549,13 @@
                     locationWatchId = null;
                 }
                 
-                await fetch(API_BASE + 'stop_sharing.php', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
+                await db.collection('drivers').doc(currentDriver.id).update({
+                    isSharingLocation: false,
+                    location: null,
+                    lastUpdate: firebase.firestore.FieldValue.serverTimestamp()
                 });
                 
-                currentDriver.is_sharing_location = false;
+                currentDriver.isSharingLocation = false;
                 updateSharingStatus(false);
                 showAlert('Location sharing stopped', 'info');
                 
@@ -1460,30 +1566,7 @@
                 btn.disabled = false;
             }
         }
-        
-        async function sendLocation(position) {
-            const data = {
-                latitude: position.coords.latitude,
-                longitude: position.coords.longitude,
-                accuracy: position.coords.accuracy,
-                speed: position.coords.speed || 0,
-                heading: position.coords.heading || 0
-            };
-            
-            try {
-                await fetch(API_BASE + 'update_location.php', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                });
-                
-                updateLocationDisplay(data);
-                
-            } catch (error) {
-                console.error('Error sending location:', error);
-            }
-        }
-        
+
         function getCurrentPosition() {
             return new Promise((resolve, reject) => {
                 navigator.geolocation.getCurrentPosition(resolve, reject, {
@@ -1493,7 +1576,7 @@
                 });
             });
         }
-        
+
         function updateSharingStatus(isSharing) {
             const icon = document.getElementById('locationIcon');
             const statusText = document.getElementById('statusText');
@@ -1512,7 +1595,7 @@
             document.getElementById('driverStatusDisplay').textContent = isSharing ? 'Sharing Location' : 'Online';
             document.getElementById('driverStatusDisplay').style.color = isSharing ? '#0f9d58' : '#1a73e8';
         }
-        
+
         function updateLocationDisplay(loc) {
             document.getElementById('currentLat').textContent = loc.latitude.toFixed(6);
             document.getElementById('currentLng').textContent = loc.longitude.toFixed(6);
@@ -1521,174 +1604,121 @@
             const speedKmh = (loc.speed * 3.6).toFixed(1);
             document.getElementById('currentSpeed').textContent = loc.speed > 0 ? speedKmh + ' km/h' : '0 km/h';
         }
-        
-        // ==================== MAP FUNCTIONS ====================
-        function initMap() {
-            if (typeof L === 'undefined') return;
-            
-            const mapElement = document.getElementById('map');
-            if (!mapElement) return;
-            
-            map = L.map('map').setView([20.5937, 78.9629], 5);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap'
-            }).addTo(map);
-            
-            mapInitialized = true;
-        }
-        
-        function updateMapMarkers(drivers) {
-            if (!map) return;
-            
-            // Clear existing markers
-            Object.values(driverMarkers).forEach(m => map.removeLayer(m));
-            driverMarkers = {};
-            
-            drivers.forEach(driver => {
-                if (driver.is_sharing_location && driver.location) {
-                    const { latitude, longitude } = driver.location;
-                    
-                    const marker = L.marker([latitude, longitude], {
-                        icon: L.divIcon({
-                            html: `<div style="background: #0f9d58; color: white; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 3px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.3);">
-                                    <i class="fas fa-car"></i>
-                                  </div>`,
-                            iconSize: [40, 40],
-                            iconAnchor: [20, 40]
-                        })
-                    }).addTo(map);
-                    
-                    marker.bindPopup(`
-                        <b>${driver.name}</b><br>
-                        <i class="fas fa-car"></i> ${driver.vehicle}<br>
-                        <i class="fas fa-phone"></i> ${driver.phone}<br>
-                        <small>Lat: ${latitude.toFixed(6)}<br>Lng: ${longitude.toFixed(6)}</small>
-                        <br>
-                        <button onclick="focusDriver('${driver.id}')" style="margin-top: 5px; padding: 2px 8px; background: #1a73e8; color: white; border: none; border-radius: 4px; cursor: pointer;">Center</button>
-                    `);
-                    
-                    driverMarkers[driver.id] = marker;
-                }
-            });
-            
-            // Fit bounds if there are markers
-            const markers = Object.values(driverMarkers);
-            if (markers.length > 0) {
-                const bounds = L.latLngBounds(markers.map(m => m.getLatLng()));
-                map.fitBounds(bounds, { padding: [50, 50] });
+
+        // ==================== HELPER FUNCTIONS ====================
+        function getFirebaseErrorMessage(error) {
+            switch(error.code) {
+                case 'auth/email-already-in-use':
+                    return 'Email already in use';
+                case 'auth/invalid-email':
+                    return 'Invalid email address';
+                case 'auth/weak-password':
+                    return 'Password is too weak';
+                case 'auth/user-not-found':
+                    return 'User not found';
+                case 'auth/wrong-password':
+                    return 'Incorrect password';
+                case 'auth/network-request-failed':
+                    return 'Network error';
+                default:
+                    return error.message;
             }
         }
-        
-        function focusDriver(driverId) {
-            const marker = driverMarkers[driverId];
-            if (marker) {
-                map.setView(marker.getLatLng(), 15);
-                marker.openPopup();
-            }
+
+        function showLoginError(message) {
+            const errorDiv = document.getElementById('loginError');
+            errorDiv.innerHTML = message;
+            errorDiv.style.display = 'block';
+            setTimeout(() => errorDiv.style.display = 'none', 5000);
         }
-        
-        // ==================== POLLING ====================
-        function startPolling() {
-            if (pollInterval) clearInterval(pollInterval);
-            pollInterval = setInterval(loadDrivers, 5000);
-        }
-        
-        // ==================== UI HELPERS ====================
-        function showLoginError(msg) {
-            const err = document.getElementById('loginError');
-            err.innerHTML = msg;
-            err.style.display = 'block';
-            setTimeout(() => err.style.display = 'none', 5000);
-        }
-        
-        function showDriverError(msg) {
-            const err = document.getElementById('addDriverError');
-            err.innerHTML = msg;
-            err.style.display = 'block';
+
+        function showDriverError(message) {
+            const errorDiv = document.getElementById('addDriverError');
+            errorDiv.innerHTML = message;
+            errorDiv.style.display = 'block';
             document.getElementById('addDriverSuccess').style.display = 'none';
         }
-        
-        function showDriverSuccess(msg) {
-            const suc = document.getElementById('addDriverSuccess');
-            suc.innerHTML = msg;
-            suc.style.display = 'block';
+
+        function showDriverSuccess(message) {
+            const successDiv = document.getElementById('addDriverSuccess');
+            successDiv.innerHTML = message;
+            successDiv.style.display = 'block';
             document.getElementById('addDriverError').style.display = 'none';
         }
-        
-        function showOwnerError(msg) {
-            const err = document.getElementById('addOwnerError');
-            err.innerHTML = msg;
-            err.style.display = 'block';
+
+        function showOwnerError(message) {
+            const errorDiv = document.getElementById('addOwnerError');
+            errorDiv.innerHTML = message;
+            errorDiv.style.display = 'block';
             document.getElementById('addOwnerSuccess').style.display = 'none';
         }
-        
-        function showOwnerSuccess(msg) {
-            const suc = document.getElementById('addOwnerSuccess');
-            suc.innerHTML = msg;
-            suc.style.display = 'block';
+
+        function showOwnerSuccess(message) {
+            const successDiv = document.getElementById('addOwnerSuccess');
+            successDiv.innerHTML = message;
+            successDiv.style.display = 'block';
             document.getElementById('addOwnerError').style.display = 'none';
         }
-        
-        function showAlert(msg, type) {
+
+        function showAlert(message, type) {
             const alert = document.createElement('div');
             alert.className = `alert alert-${type}`;
-            alert.innerHTML = `<i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i> ${msg}`;
+            alert.innerHTML = `<i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i> ${message}`;
             document.body.appendChild(alert);
             setTimeout(() => alert.remove(), 3000);
         }
-        
+
         // ==================== MODAL FUNCTIONS ====================
         function setupModals() {
-            // Add Driver Modal
             document.getElementById('addDriverBtn').addEventListener('click', openAddDriverModal);
             document.getElementById('closeDriverModalBtn').addEventListener('click', closeAddDriverModal);
             document.getElementById('submitDriverBtn').addEventListener('click', addNewDriver);
             
-            // Add Owner Modal
             document.getElementById('addOwnerBtn').addEventListener('click', openAddOwnerModal);
             document.getElementById('closeOwnerModalBtn').addEventListener('click', closeAddOwnerModal);
             document.getElementById('submitOwnerBtn').addEventListener('click', addNewOwner);
             
-            // Delete Confirmation Modal
             document.getElementById('cancelDeleteBtn').addEventListener('click', closeDeleteModal);
             document.getElementById('confirmDeleteBtn').addEventListener('click', deleteDriver);
         }
-        
+
         function openAddDriverModal() {
             document.getElementById('addDriverModal').style.display = 'flex';
         }
-        
+
         function closeAddDriverModal() {
             document.getElementById('addDriverModal').style.display = 'none';
             document.getElementById('addDriverError').style.display = 'none';
             document.getElementById('addDriverSuccess').style.display = 'none';
         }
-        
+
         function openAddOwnerModal() {
             document.getElementById('addOwnerModal').style.display = 'flex';
         }
-        
+
         function closeAddOwnerModal() {
             document.getElementById('addOwnerModal').style.display = 'none';
             document.getElementById('addOwnerError').style.display = 'none';
             document.getElementById('addOwnerSuccess').style.display = 'none';
         }
-        
+
         function closeDeleteModal() {
             document.getElementById('deleteConfirmModal').style.display = 'none';
             driverToDelete = null;
         }
-        
+
         // ==================== DASHBOARD BUTTONS ====================
         function setupDashboardButtons() {
             document.getElementById('logoutBtn').addEventListener('click', logout);
             document.getElementById('driverLogoutBtn').addEventListener('click', logout);
-            document.getElementById('refreshBtn').addEventListener('click', loadDrivers);
+            document.getElementById('refreshBtn').addEventListener('click', () => {
+                if (driversUnsubscribe) listenToDrivers();
+            });
             document.getElementById('centerBtn').addEventListener('click', centerMap);
             document.getElementById('viewAllBtn').addEventListener('click', viewAllDrivers);
             document.getElementById('shareLocationBtn').addEventListener('click', toggleLocationSharing);
         }
-        
+
         function centerMap() {
             if (map && navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(
@@ -1697,7 +1727,7 @@
                 );
             }
         }
-        
+
         function viewAllDrivers() {
             const markers = Object.values(driverMarkers);
             if (markers.length === 0) {
@@ -1712,18 +1742,30 @@
                 map.fitBounds(bounds, { padding: [50, 50] });
             }
         }
-        
+
         async function logout() {
             try {
                 if (locationWatchId) {
                     navigator.geolocation.clearWatch(locationWatchId);
+                    locationWatchId = null;
                 }
                 
-                if (pollInterval) {
-                    clearInterval(pollInterval);
+                if (currentDriver && db) {
+                    await db.collection('drivers').doc(currentDriver.id).update({
+                        isOnline: false,
+                        isSharingLocation: false,
+                        location: null
+                    });
                 }
                 
-                await fetch(API_BASE + 'logout.php', { method: 'POST' });
+                if (driversUnsubscribe) {
+                    driversUnsubscribe();
+                    driversUnsubscribe = null;
+                }
+                
+                if (auth && currentUser) {
+                    await auth.signOut();
+                }
                 
                 currentUser = null;
                 currentDriver = null;
@@ -1732,7 +1774,6 @@
                 document.getElementById('driverDashboard').style.display = 'none';
                 document.getElementById('loginContainer').style.display = 'flex';
                 
-                // Reset forms
                 document.getElementById('ownerEmail').value = '';
                 document.getElementById('ownerPassword').value = '';
                 document.getElementById('driverName').value = '';
@@ -1742,8 +1783,7 @@
                 console.error('Logout error:', error);
             }
         }
-        
-        // Close modals on outside click
+
         window.onclick = function(event) {
             const driverModal = document.getElementById('addDriverModal');
             const ownerModal = document.getElementById('addOwnerModal');
@@ -1753,9 +1793,8 @@
             if (event.target == ownerModal) closeAddOwnerModal();
             if (event.target == deleteModal) closeDeleteModal();
         };
-        
+
         // Make functions available globally
-        window.focusDriver = focusDriver;
         window.confirmDeleteDriver = confirmDeleteDriver;
     </script>
 </body>
